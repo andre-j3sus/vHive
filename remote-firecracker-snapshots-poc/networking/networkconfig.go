@@ -14,7 +14,7 @@ type NetworkConfig struct {
 }
 
 func NewNetworkConfig(id int) NetworkConfig {
-	return NetworkConfig{id: id, containerCIDR: "172.16.0.2/24", gatewayCIDR: "172.16.0.1/24", containerTap: "tap0"}
+	return NetworkConfig{id: id, containerCIDR: "192.168.0.2/16 ", gatewayCIDR: "192.168.0.1/16 ", containerTap: "tap0"}
 }
 
 func (cfg *NetworkConfig) getVeth0Name() string {
@@ -22,7 +22,7 @@ func (cfg *NetworkConfig) getVeth0Name() string {
 }
 
 func (cfg *NetworkConfig) getVeth0CIDR() string {
-	return fmt.Sprintf("172.17.%d.%d/30", (4*cfg.id)/256, ((4*cfg.id)+2)%256)
+	return fmt.Sprintf("192.169.%d.%d/30", (4*cfg.id)/256, ((4*cfg.id)+2)%256)
 }
 
 func (cfg *NetworkConfig) getVeth1Name() string {
@@ -30,11 +30,11 @@ func (cfg *NetworkConfig) getVeth1Name() string {
 }
 
 func (cfg *NetworkConfig) getVeth1CIDR() string {
-	return fmt.Sprintf("172.17.%d.%d/30", (4*cfg.id)/256, ((4*cfg.id)+1)%256)
+	return fmt.Sprintf("192.169.%d.%d/30", (4*cfg.id)/256, ((4*cfg.id)+1)%256)
 }
 
 func (cfg *NetworkConfig) GetCloneIP() string {
-	return fmt.Sprintf("172.18.%d.%d", cfg.id/254, 1+(cfg.id%254))
+	return fmt.Sprintf("192.169.%d.%d", cfg.id/254, 1+(cfg.id%254))
 }
 
 func (cfg *NetworkConfig) getNamespaceName() string {
