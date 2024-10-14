@@ -1,203 +1,213 @@
+// Package networking provides primitives to connect function instances to the network.
 package networking
 
 import (
-	"fmt"
+	"log"
+	"sync"
+
 	"github.com/pkg/errors"
-	"github.com/vishvananda/netns"
-	"runtime"
 )
 
+// NetworkManager manages the in use network configurations along with a pool of free network configurations
+// that can be used to connect a function instance to the network.
 type NetworkManager struct {
-	// Each VM has a network id. Each ID gets used for the veth pair and generating IP addresses
-	freeIDs       []int
+	sync.Mutex
 	nextID        int
-	netConfigs    map[string]NetworkConfig // Maps vmIDs to their network config
 	hostIfaceName string
+
+	// Pool of free network configs
+	networkPool []*NetworkConfig
+	poolCond    *sync.Cond
+	poolSize    int
+
+	// Mapping of function instance IDs to their network config
+	netConfigs map[string]*NetworkConfig
+
+	// Network configs that are being created
+	inCreation sync.WaitGroup
 }
 
-// NewOrchestrator Initializes a new orchestrator
-func NewNetworkManager() *NetworkManager {
+// NewNetworkManager creates and returns a new network manager that connects function instances to the network
+// using the supplied interface. If no interface is supplied, the default interface is used. To take the network
+// setup of the critical path of a function creation, the network manager tries to maintain a pool of ready to use
+// network configurations of size at least poolSize.
+func NewNetworkManager(hostIfaceName string, poolSize int) (*NetworkManager, error) {
 	manager := new(NetworkManager)
-	manager.hostIfaceName = "eno49"
-	manager.netConfigs = make(map[string]NetworkConfig)
-	manager.freeIDs = make([]int, 0)
+
+	manager.hostIfaceName = hostIfaceName
+	if manager.hostIfaceName == "" {
+		hostIface, err := getHostIfaceName()
+		if err != nil {
+			return nil, err
+		} else {
+			manager.hostIfaceName = hostIface
+		}
+	}
+
+	manager.netConfigs = make(map[string]*NetworkConfig)
+	manager.networkPool = make([]*NetworkConfig, 0)
 
 	startId, err := getNetworkStartID()
 	if err == nil {
 		manager.nextID = startId
 	} else {
 		manager.nextID = 0
-		fmt.Println(err)
 	}
 
-	return manager
+	manager.poolCond = sync.NewCond(new(sync.Mutex))
+	manager.initConfigPool(poolSize)
+	manager.poolSize = poolSize
+
+	return manager, nil
 }
 
-func (mgr *NetworkManager) createNetConfig(vmID string) {
-	var id int
-	if len(mgr.freeIDs) == 0 {
-		id = mgr.nextID
-		mgr.nextID += 1
-	} else {
-		id = mgr.freeIDs[len(mgr.freeIDs)-1]
-		mgr.freeIDs = mgr.freeIDs[:len(mgr.freeIDs)-1]
-	}
+// initConfigPool fills an empty network pool up to the given poolSize
+func (mgr *NetworkManager) initConfigPool(poolSize int) {
+	var wg sync.WaitGroup
+	wg.Add(poolSize)
 
-	mgr.netConfigs[vmID] = NewNetworkConfig(id)
+	log.Printf("Initializing network pool with %d network configs", poolSize)
+
+	// Concurrently create poolSize network configs
+	for i := 0; i < poolSize; i++ {
+		go func() {
+			mgr.addNetConfig()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
-func (mgr *NetworkManager) removeNetConfig(vmID string) {
-	config := mgr.netConfigs[vmID]
-	mgr.freeIDs = append(mgr.freeIDs, config.id)
-	delete(mgr.netConfigs, vmID)
+// addNetConfig creates and initializes a new network config
+func (mgr *NetworkManager) addNetConfig() {
+	mgr.Lock()
+	id := mgr.nextID
+	mgr.nextID += 1
+	mgr.inCreation.Add(1)
+	mgr.Unlock()
+
+	netCfg := NewNetworkConfig(id, mgr.hostIfaceName)
+	if err := netCfg.CreateNetwork(); err != nil {
+		errors.Wrapf(err, "failed to create network")
+	}
+
+	mgr.poolCond.L.Lock()
+	mgr.networkPool = append(mgr.networkPool, netCfg)
+	// Signal in case someone is waiting for a new config to become available in the pool
+	mgr.poolCond.Signal()
+	mgr.poolCond.L.Unlock()
+	mgr.inCreation.Done()
 }
 
-func (mgr *NetworkManager) CreateNetwork(vmID string) error {
-	// Create network configuration for VM
-	mgr.createNetConfig(vmID)
-	netCfg := mgr.netConfigs[vmID]
+// allocNetConfig allocates a new network config from the pool to a function instance identified by funcID
+func (mgr *NetworkManager) allocNetConfig(funcID string) *NetworkConfig {
+	// Add netconfig to pool to keep pool to configured size
+	go mgr.addNetConfig()
+	log.Printf("Allocating a new network config from network pool to function instance")
 
-	// Lock the OS Thread, so we don't accidentally switch namespaces.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	// 0. Get host network namespace
-	hostNsHandle, err := netns.Get()
-	defer hostNsHandle.Close()
-	if err != nil {
-		fmt.Printf("Failed to get host ns, %s\n", err)
-		return err
+	// Pop a network config from the pool and allocate it to the function instance
+	mgr.poolCond.L.Lock()
+	for len(mgr.networkPool) == 0 {
+		// Wait until a new network config has been created
+		mgr.poolCond.Wait()
 	}
 
-	// A. In uVM netns
-	// A.1. Create network namespace for uVM & join network namespace
-	vmNsHandle, err := netns.NewNamed(netCfg.getNamespaceName()) // Switches namespace
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-	defer vmNsHandle.Close()
+	config := mgr.networkPool[len(mgr.networkPool)-1]
+	mgr.networkPool = mgr.networkPool[:len(mgr.networkPool)-1]
+	mgr.poolCond.L.Unlock()
 
-	// A.2. Create tap device for uVM
-	if err := createTap(netCfg.containerTap, netCfg.gatewayCIDR, netCfg.getNamespaceName()); err != nil {
-		return err
-	}
+	mgr.Lock()
+	mgr.netConfigs[funcID] = config
+	mgr.Unlock()
 
-	// A.3. Create veth pair for uVM
-	// A.3.1 Create veth pair
-	if err := createVethPair(netCfg.getVeth0Name(), netCfg.getVeth1Name(), vmNsHandle, hostNsHandle); err != nil {
-		return err
-	}
+	log.Printf("Network config: funcID: %s, ContainerIP: %s, NamespaceName: %s, Veth0CIDR: %s, Veth0Name: %s, Veth1CIDR: %s, Veth1Name: %s, CloneIP: %s, ContainerCIDR: %s, GatewayIP: %s, HostDevName: %s, NamespacePath: %s", funcID, config.getContainerIP(), config.getNamespaceName(), config.getVeth0CIDR(), config.getVeth0Name(), config.getVeth1CIDR(), config.getVeth1Name(), config.GetCloneIP(), config.GetContainerCIDR(), config.GetGatewayIP(), config.GetHostDevName(), config.GetNamespacePath())
 
-	// A.3.2 Configure uVM side veth pair
-	if err := configVeth(netCfg.getVeth0Name(), netCfg.getVeth0CIDR()); err != nil {
-		return err
-	}
+	return config
+}
 
-	// A.3.3 Designate host side as default gateway for packets leaving namespace
-	if err := setDefaultGateway(netCfg.getVeth1CIDR()); err != nil {
-		return err
-	}
+// releaseNetConfig releases the network config of a given function instance with id funcID back to the pool
+func (mgr *NetworkManager) releaseNetConfig(funcID string) {
+	mgr.Lock()
+	config := mgr.netConfigs[funcID]
+	delete(mgr.netConfigs, funcID)
+	mgr.Unlock()
 
-	// A.4. Setup NAT rules
-	if err := setupNatRules(netCfg.getVeth0Name(), netCfg.getContainerIP(), netCfg.GetCloneIP()); err != nil {
-		return err
-	}
+	log.Printf("Releasing network config from function instance and adding it to network pool")
 
-	// B. In host netns
-	// B.1 Go back to host namespace
-	err = netns.Set(hostNsHandle)
-	if err != nil {
-		return err
-	}
+	// Add network config back to the pool. We allow the pool to grow over it's configured size here since the
+	// overhead of keeping a network config in the pool is low compared to the cost of creating a new config.
+	mgr.poolCond.L.Lock()
+	mgr.networkPool = append(mgr.networkPool, config)
+	mgr.poolCond.Signal()
+	mgr.poolCond.L.Unlock()
+}
 
-	// B.2 Configure host side veth pair
-	if err := configVeth(netCfg.getVeth1Name(), netCfg.getVeth1CIDR()); err != nil {
-		return err
-	}
+// CreateNetwork creates the networking for a function instance identified by funcID
+func (mgr *NetworkManager) CreateNetwork(funcID string) (*NetworkConfig, error) {
+	log.Printf("Creating network config for function instance %s", funcID)
 
-	// B.3 Add a route on the host for the clone address
-	if err := addRoute(netCfg.GetCloneIP(), netCfg.getVeth0CIDR()); err != nil {
-		return err
-	}
+	netCfg := mgr.allocNetConfig(funcID)
+	return netCfg, nil
+}
 
-	// B.4 Setup nat to route traffic out of veth device
-	if err := setupForwardRules(netCfg.getVeth1Name(), mgr.hostIfaceName); err != nil {
-		return err
-	}
+// GetConfig returns the network config assigned to a function instance identified by funcID
+func (mgr *NetworkManager) GetConfig(funcID string) *NetworkConfig {
+	mgr.Lock()
+	defer mgr.Unlock()
 
+	cfg := mgr.netConfigs[funcID]
+	return cfg
+}
+
+// RemoveNetwork removes the network config of a function instance identified by funcID. The allocated network devices
+// for the given function instance must not be in use anymore when calling this function.
+func (mgr *NetworkManager) RemoveNetwork(funcID string) error {
+	log.Printf("Removing network config for function instance %s", funcID)
+	mgr.releaseNetConfig(funcID)
 	return nil
 }
 
-func (mgr *NetworkManager) GetConfig(vmID string) *NetworkConfig {
-	cfg := mgr.netConfigs[vmID]
-	return &cfg
-}
+// Cleanup removes and deallocates all network configurations that are in use or in the network pool. Make sure to first
+// clean up all running functions before removing their network configs.
+func (mgr *NetworkManager) Cleanup() error {
+	log.Println("Cleaning up network manager")
+	mgr.Lock()
+	defer mgr.Unlock()
 
-func (mgr *NetworkManager) RemoveNetwork(vmID string) error {
-	netCfg := mgr.netConfigs[vmID]
+	// Wait till all network configs still in creation are added
+	mgr.inCreation.Wait()
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	hostNsHandle, err := netns.Get()
-	defer hostNsHandle.Close()
-	if err != nil {
-		fmt.Printf("Failed to get host ns, %s\n", err)
-		return err
+	// Release network configs still in use
+	var wgu sync.WaitGroup
+	wgu.Add(len(mgr.netConfigs))
+	for funcID := range mgr.netConfigs {
+		config := mgr.netConfigs[funcID]
+		go func(config *NetworkConfig) {
+			if err := config.RemoveNetwork(); err != nil {
+				errors.Wrapf(err, "failed to remove network")
+			}
+			wgu.Done()
+		}(config)
 	}
+	wgu.Wait()
+	mgr.netConfigs = make(map[string]*NetworkConfig)
 
-	// Delete nat to route traffic out of veth device
-	if err := deleteForwardRules(netCfg.getVeth1Name(), mgr.hostIfaceName); err != nil {
-		return err
-	}
+	// Cleanup network pool
+	mgr.poolCond.L.Lock()
+	var wg sync.WaitGroup
+	wg.Add(len(mgr.networkPool))
 
-	// Delete route on the host for the clone address
-	if err := deleteRoute(netCfg.GetCloneIP(), netCfg.getVeth0CIDR()); err != nil {
-		return err
+	for _, config := range mgr.networkPool {
+		go func(config *NetworkConfig) {
+			if err := config.RemoveNetwork(); err != nil {
+				errors.Wrapf(err, "failed to remove network")
+			}
+			wg.Done()
+		}(config)
 	}
-
-	// Get uVM namespace handle
-	vmNsHandle, err := netns.GetFromName(netCfg.getNamespaceName())
-	defer vmNsHandle.Close()
-	if err != nil {
-		return err
-	}
-	err = netns.Set(vmNsHandle)
-	if err != nil {
-		return err
-	}
-
-	// Delete NAT rules
-	if err := deleteNatRules(netCfg.getVeth0Name(), netCfg.getContainerIP(), netCfg.GetCloneIP()); err != nil {
-		return err
-	}
-
-	// Delete default gateway for packets leaving namespace
-	if err := deleteDefaultGateway(netCfg.getVeth1CIDR()); err != nil {
-		return err
-	}
-
-	// Delete uVM side veth pair
-	if err := deleteVethPair(netCfg.getVeth0Name(), netCfg.getVeth1Name(), vmNsHandle, hostNsHandle); err != nil {
-		return err
-	}
-
-	// Delete tap device for uVM
-	if err := deleteTap(netCfg.containerTap); err != nil {
-		return err
-	}
-
-	if err := netns.DeleteNamed(netCfg.getNamespaceName()); err != nil {
-		return errors.Wrapf(err, "deleting network namespace")
-	}
-
-	err = netns.Set(hostNsHandle)
-	if err != nil {
-		return err
-	}
-
-	mgr.removeNetConfig(vmID)
+	wg.Wait()
+	mgr.networkPool = make([]*NetworkConfig, 0)
+	mgr.poolCond.L.Unlock()
 
 	return nil
 }

@@ -15,9 +15,7 @@ git checkout remote-firecracker-snapshots-poc
 2. Install go, if you haven't already:
 
 ```bash
-./scripts/install_go.sh
-echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.bashrc
-source ~/.bashrc
+./scripts/install_go.sh; source /etc/profile
 ```
 
 3. Setup the environment:
@@ -37,6 +35,7 @@ source ~/.bashrc
 ```bash
 pushd remote-firecracker-snapshots-poc
 mkdir snaps
+go mod tidy
 go build
 popd
 ```

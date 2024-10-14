@@ -66,7 +66,10 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBasePath string) (*O
 	orch.vms = make(map[string]VMInfo)
 	orch.snapshotter = snapshotter
 	orch.ctx = namespaces.WithNamespace(context.Background(), containerdNamespace)
-	orch.networkManager = networking.NewNetworkManager()
+	orch.networkManager, err = networking.NewNetworkManager("", 0)
+	if err != nil {
+		return nil, errors.Wrapf(err, "creating network manager")
+	}
 
 	orch.snapshotManager = snapshotting.NewSnapshotManager(snapsBasePath)
 	err = orch.snapshotManager.RecoverSnapshots(snapsBasePath)

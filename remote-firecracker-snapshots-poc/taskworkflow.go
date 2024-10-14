@@ -60,7 +60,7 @@ func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, ma
 	}
 
 	log.Println("Creating network")
-	if err := orch.networkManager.CreateNetwork(vmID); err != nil {
+	if _, err := orch.networkManager.CreateNetwork(vmID); err != nil {
 		return fmt.Errorf("creating network: %w", err)
 	}
 
