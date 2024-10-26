@@ -7,22 +7,22 @@ import (
 	"os/exec"
 	"syscall"
 
+	"github.com/containerd/nerdctl/pkg/imgutil/commit"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
+	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/nerdctl/pkg/imgutil/commit"
 	fcclient "github.com/firecracker-microvm/firecracker-containerd/firecracker-control/client"
 	"github.com/firecracker-microvm/firecracker-containerd/proto"
 	"github.com/firecracker-microvm/firecracker-containerd/runtime/firecrackeroci"
 	"github.com/opencontainers/image-spec/identity"
 	"github.com/pkg/errors"
-	"github.com/vhive-serverless/remote-firecracker-snapshots-poc/networking"
+	"github.com/vhive-serverless/vhive/networking"
 	"github.com/vhive-serverless/remote-firecracker-snapshots-poc/snapshotting"
 	"log"
 	"path/filepath"
@@ -58,7 +58,7 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator Initializes a new orchestrator
-func NewOrchestrator(snapshotter, containerdNamespace, snapsBasePath string) (*Orchestrator, error) {
+func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder string) (*Orchestrator, error) {
 	var err error
 
 	orch := new(Orchestrator)
@@ -71,8 +71,8 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBasePath string) (*O
 		return nil, errors.Wrapf(err, "creating network manager")
 	}
 
-	orch.snapshotManager = snapshotting.NewSnapshotManager(snapsBasePath)
-	err = orch.snapshotManager.RecoverSnapshots(snapsBasePath)
+	orch.snapshotManager = snapshotting.NewSnapshotManager(snapsBaseFolder)
+	err = orch.snapshotManager.RecoverSnapshots(snapsBaseFolder)
 	if err != nil {
 		return nil, errors.Wrapf(err, "recovering snapshots")
 	}
@@ -119,10 +119,12 @@ func (orch *Orchestrator) getContainerImage(imageName string) (*containerd.Image
 		log.Printf("Pulling image %s\n", imageName)
 
 		imageURL := getImageURL(imageName)
-		image, err = orch.client.Pull(orch.ctx, imageURL,
-			containerd.WithPullUnpack,
-			containerd.WithPullSnapshotter(snapshotter),
-		)
+		options := docker.ResolverOptions{
+			Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
+			Client: http.DefaultClient,
+		}
+		image, err = orch.client.Pull(orch.ctx, imageURL, containerd.WithPullUnpack, containerd.WithPullSnapshotter(snapshotter),
+			containerd.WithResolver(docker.NewResolver(options)))
 
 		if err != nil {
 			return nil, errors.Wrapf(err, "pulling image")
@@ -269,7 +271,7 @@ func (orch *Orchestrator) commitCtrSnap(vmID, snapCommitName string) error {
 		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 		Client: http.DefaultClient,
 	}
-	err = orch.client.Push(orch.ctx, fmt.Sprintf("pc69.cloudlab.umass.edu:5000/%s:latest", snapCommitName),
+	err = orch.client.Push(orch.ctx, fmt.Sprintf("localhost:5000/%s:latest", snapCommitName),
 		img.Target(), containerd.WithResolver(docker.NewResolver(options)))
 	if err != nil {
 		return fmt.Errorf("pushing container snapshot patch: %w", err)
@@ -285,7 +287,7 @@ func (orch *Orchestrator) pullCtrSnapCommit(snapCommitName string) (*containerd.
 		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 		Client: http.DefaultClient,
 	}
-	img, err := orch.client.Pull(orch.ctx, fmt.Sprintf("pc69.cloudlab.umass.edu:5000/%s:latest", snapCommitName),
+	img, err := orch.client.Pull(orch.ctx, fmt.Sprintf("localhost:5000/%s:latest", snapCommitName),
 		containerd.WithPullUnpack, containerd.WithPullSnapshotter(snapshotter),
 		containerd.WithResolver(docker.NewResolver(options)))
 	if err != nil {
@@ -333,7 +335,7 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	//}
 
 	log.Println("Committing container snapshot")
-	err = orch.commitCtrSnap(vmID, snap.GetCtrSnapCommitName())
+	err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
 	if err != nil {
 		return fmt.Errorf("committing container snapshot: %w", err)
 	}
@@ -351,7 +353,7 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	log.Println("Serializing snapshot information")
 	snapInfo := Snapshot{
 		Img:               orch.vms[vmID].imgName,
-		CtrSnapCommitName: snap.GetCtrSnapCommitName(),
+		CtrSnapCommitName: snap.GetContainerSnapName(),
 	}
 	if err := serializeSnapInfo(snap.GetInfoFilePath(), snapInfo); err != nil {
 		return fmt.Errorf("serializing snapshot information: %w", err)
