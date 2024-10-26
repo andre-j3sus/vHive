@@ -28,7 +28,7 @@ func (snp *Snapshot) GetMemFilePath() string {
 	return filepath.Join(snp.baseFolder, "memfile")
 }
 
-func (snp *Snapshot) GetCtrSnapCommitName() string {
+func (snp *Snapshot) GetContainerSnapName() string {
 	return fmt.Sprintf("revision-%s-commit", snp.id)
 }
 
