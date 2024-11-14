@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/containerd/containerd/reference"
 )
 
 const (
@@ -16,7 +18,16 @@ const (
 	namespaceName          = "remote-firecracker-snapshots-poc"
 	macAddress             = "AA:FC:00:00:00:01"
 	hostDevName            = "tap0"
-	snapshotter            = "devmapper"
+	snapshotter            = "proxy"
+	dockerMetadataTemplate = `
+		{
+			"docker-credentials": {
+				"%s": {
+					"username": "%s", 
+					"password": "%s"
+				}
+			}
+		}`
 )
 
 func main() {
@@ -54,7 +65,9 @@ func main() {
 
 func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, makeSnap, bootFromSnap bool) (err error) {
 	log.Println("Creating orchestrator")
-	orch, err := NewOrchestrator(snapshotter, namespaceName, snapsBasePath)
+	// The example http-address-resolver assumes that the containerd namespace
+	// is the sames as the VM ID.
+	orch, err := NewOrchestrator(snapshotter, vmID, snapsBasePath)
 	if err != nil {
 		return fmt.Errorf("creating orchestrator: %w", err)
 	}
@@ -101,16 +114,38 @@ func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, ma
 }
 
 func bootstrapVM(orch *Orchestrator, vmID, imageName string) error {
-	log.Println("Retrieving container image")
-	image, err := orch.getContainerImage(imageName)
+	refSpec, err := reference.Parse(imageName)
 	if err != nil {
-		return fmt.Errorf("getting container image: %w", err)
+		fmt.Printf("%s is not a valid image reference\n", imageName)
+	}
+	dockerHost := refSpec.Hostname()
+	dockerUser, ok := os.LookupEnv("DOCKER_USERNAME")
+	if !ok {
+		fmt.Print("Docker username: ")
+		_, err := fmt.Scanln(&dockerUser)
+		if err != nil {
+			return fmt.Errorf("docker username: %w", err)
+		}
+	}
+	dockerPass, ok := os.LookupEnv("DOCKER_PASSWORD")
+	if !ok {
+		fmt.Print("Docker password: ")
+		_, err := fmt.Scanln(&dockerPass)
+		if err != nil {
+			return fmt.Errorf("docker password: %w", err)
+		}
 	}
 
 	log.Println("Creating VM")
 	err = orch.createVM(vmID)
 	if err != nil {
 		return fmt.Errorf("creating VM: %w", err)
+	}
+
+	log.Println("Retrieving container image")
+	image, err := orch.getContainerImage(vmID, imageName, dockerMetadataTemplate, dockerHost, dockerUser, dockerPass)
+	if err != nil {
+		return fmt.Errorf("getting container image: %w", err)
 	}
 
 	log.Println("Starting container")

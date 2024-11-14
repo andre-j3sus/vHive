@@ -194,4 +194,56 @@ I also tried to use the image to start a container in a fresh microVM, and it wo
 
 ## Using stargz snapshotter 
 
-Tried to follow the [Getting started with remote snapshotters in firecracker-containerd](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md) guide, and got blocked at one of the steps. Opened an issue [here](https://github.com/firecracker-microvm/firecracker-containerd/issues/796).
+I tried to follow the [Getting started with remote snapshotters in firecracker-containerd](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md) guide.
+
+1. Clone the firecracker-containerd repository:
+
+```bash
+git clone --recurse-submodules https://github.com/firecracker-microvm/firecracker-containerd
+```
+
+> **Note**: Steps 2 and 3 need to be executed in the firecracker-containerd repository. The rest of the steps should be executed in the vHive repository.
+
+2. [Build a Linux kernel with FUSE support](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#build-a-linux-kernel-with-fuse-support):
+
+```bash
+KERNEL_VERSION=5.10 make kernel
+KERNEL_VERSION=5.10 make install-kernel
+```
+
+3. [Build a Firecracker rootfs with a remote snapshotter](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#build-a-firecracker-rootfs-with-a-remote-snapshotter):
+  
+```bash
+make image-stargz
+make install-stargz-rootfs
+```
+
+4. Configure demux-snapshotter:
+
+```bash
+./scripts/setup_demux_snapshotter.sh
+```
+
+5. [Start all of the host-daemons](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#start-all-of-the-host-daemons):
+
+Each in a separate shell:
+
+```bash
+sudo firecracker-containerd --config /etc/firecracker-containerd/config.toml
+```
+
+The following commands should be executed in the firecracker-containerd repository:
+
+```bash
+sudo snapshotter/demux-snapshotter
+```
+
+```bash
+sudo snapshotter/http-address-resolver
+```
+
+6. Start a VM with the stargz snapshotter:
+
+```bash
+sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -id "0" -image "ghcr.io/firecracker-microvm/firecracker-containerd/amazonlinux:latest-esgz" -revision "amazonlinux" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps"
+```
