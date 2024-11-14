@@ -55,4 +55,5 @@ sudo tar -C /usr/local -xzf ${go_link##*/}
 
 export PATH=$PATH:/usr/local/go/bin
 
-sudo sh -c  "echo 'export PATH=\$PATH:/usr/local/go/bin' >> /etc/profile"
+sudo sh -c  "echo 'export PATH=\$PATH:/usr/local/go/bin' >> ~/.bashrc"
+source ~/.bashrc

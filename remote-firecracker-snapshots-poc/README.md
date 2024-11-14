@@ -5,7 +5,7 @@ This guide provides instructions on how to create and boot from snapshots using 
 ### Table of Contents
 
 - [Remote Firecracker Snapshots PoC](#remote-firecracker-snapshots-poc)
-    - [Table of Contents](#table-of-contents)
+  - [Table of Contents](#table-of-contents)
   - [Setup](#setup)
     - [Setup Remote Registry](#setup-remote-registry)
   - [Usage](#usage)
@@ -17,7 +17,7 @@ This guide provides instructions on how to create and boot from snapshots using 
     - [Boot from a snapshot](#boot-from-a-snapshot-1)
   - [Current blockers](#current-blockers)
     - [Hypothesis](#hypothesis)
-  - [Using stargz snapshotter](#using-stargz-snapshotter)
+  - [Lazily Pulling Container Images using Stargz](#lazily-pulling-container-images-using-stargz)
 
 ## Setup
 
@@ -26,34 +26,29 @@ This guide provides instructions on how to create and boot from snapshots using 
 ```bash
 git clone https://github.com/andre-j3sus/vHive.git vhive
 cd vhive
-git checkout remote-snapshots
+git checkout remote-snapshots-stargz
 ```
 
 2. Install go by running the following command (This will install version `1.21.1`. You can configure the version to install in `configs/setup/system.json` as `GoVersion`):
-    
+
 ```bash
-./scripts/install_go.sh; source /etc/profile
+./scripts/install_go.sh
 ```
 
-3. Setup the environment:
+3. Install docker: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository and don't forget the post-installation steps: https://docs.docker.com/engine/install/linux-postinstall/
+
+4. Setup the environment:
 
 ```bash
 ./scripts/cloudlab/setup_node.sh
 ```
 
-4. Create the devmapper device:
+4. Build the go program and create the folder to store the snapshots:
 
 ```bash
-./scripts/create_devmapper.sh
-```
-
-5. Build the go program and create the folder to store the snapshots:
-
-```bash
-pushd remote-firecracker-snapshots-poc
+cd remote-firecracker-snapshots-poc
 mkdir snaps
 go build
-popd
 ```
 
 6. Start firecracker-containerd in a new terminal:
@@ -92,6 +87,14 @@ curl http://localhost:5000/v2/_catalog # Should return {"repositories":[]}
 4. Update the `remote-firecracker-snapshots-poc` program to use the remote registry:
    1. Update the `commitCtrSnap` and `pullCtrSnapCommit` methods in `orchestrator.go` to use the remote registry.
    2. If it's a local registry, you don't need to make any changes. If it's a remote registry, you need to update the URL from `localhost:5000` to `<remote IP>:5000`, e.g., `hp090.utah.cloudlab.us:5000`.
+
+Now you can pull an image from Docker Hub, and push it to the registry, for example:
+
+```bash
+nerdctl pull docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz
+nerdctl tag docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
+nerdctl push localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
+```
 
 ---
 
@@ -165,6 +168,7 @@ With the VM running, you can send requests to the VM using curl.
 After the snapshot is taken, the VM and container will be resumed, and the program will keep running.
 
 In summary, this process generates three files inside the desired folder:
+
 1. `mem_file`: Contains the memory of the VM.
 2. `snap_file`: Contains the state of the VM.
 3. `info_file`: Contains the container image name and the container snapshot commit name.
@@ -186,12 +190,66 @@ I'm facing the same blocker described [here](https://github.com/vhive-serverless
 
 ### Hypothesis
 
-The image created with `nerdctl commit` is not the problem. I tried to run a container using the image, and it worked fine, even when pulled from the remote registry. So the problem seems to be either with firecracker-containerd or with the snapshotter we are using (devmapper).
-
-I also tried to use the image to start a container in a fresh microVM, and it worked fine as well.
+The image created with `nerdctl commit` is not the problem. I tried to run a container using the image, and it worked fine, even when pulled from the remote registry. I also tried to use the image to start a container in a fresh microVM, and it worked fine as well. So the problem seems to be either with firecracker-containerd or with the snapshotter we are using (devmapper).
 
 ---
 
-## Using stargz snapshotter 
+## Lazily Pulling Container Images using Stargz
 
-Tried to follow the [Getting started with remote snapshotters in firecracker-containerd](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md) guide, and got blocked at one of the steps. Opened an issue [here](https://github.com/firecracker-microvm/firecracker-containerd/issues/796).
+[Stargz](https://github.com/containerd/stargz-snapshotter) is a container image format that allows you to lazily pull container images. This means that you can pull only the layers you need to run a container, instead of pulling the entire image. This is useful when you have a large image and you only need a few layers to run a container.
+
+Following the [Getting started with remote snapshotters in firecracker-containerd](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md) guide:
+
+1. Clone the firecracker-containerd repository. I had to make a small adjustment in the example code to allow us to pull images from Docker Hub, or an insecure registry (the official example only allows images from GitHub Container Registry):
+
+```bash
+git clone --recurse-submodules https://github.com/andre-j3sus/firecracker-containerd
+```
+
+> **Note**: Steps 2 and 3 need to be executed in the firecracker-containerd repository. The rest of the steps should be executed in the vHive repository.
+
+2. [Build a Linux kernel with FUSE support](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#build-a-linux-kernel-with-fuse-support):
+
+```bash
+KERNEL_VERSION=5.10 make kernel
+KERNEL_VERSION=5.10 make install-kernel
+```
+
+3. [Build a Firecracker rootfs with a remote snapshotter](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#build-a-firecracker-rootfs-with-a-remote-snapshotter):
+
+> Note: If you want to configure stargz-snapshotter (e.g. [add registries mirrors or insecure registries](https://github.com/containerd/stargz-snapshotter/blob/v0.14.3/docs/overview.md#registry-mirrors-and-insecure-connection)), you can do so by modifying the `tools\image-builder\files_stargz\etc\containerd-stargz-grpc\config.toml` file.
+
+```bash
+make image-stargz
+make install-stargz-rootfs
+```
+
+4. Configure demux-snapshotter:
+
+```bash
+./scripts/setup_demux_snapshotter.sh
+```
+
+5. [Start all of the host-daemons](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#start-all-of-the-host-daemons):
+
+Each in a separate shell:
+
+```bash
+sudo firecracker-containerd --config /etc/firecracker-containerd/config.toml
+```
+
+The following commands should be executed in the firecracker-containerd repository:
+
+```bash
+sudo snapshotter/demux-snapshotter
+```
+
+```bash
+sudo snapshotter/http-address-resolver
+```
+
+6. Start a VM with the stargz snapshotter:
+
+```bash
+sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -id "vm2" -image "docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps"
+```
