@@ -12,11 +12,11 @@ import (
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
+	"github.com/containerd/stargz-snapshotter/fs/source"
 	fcclient "github.com/firecracker-microvm/firecracker-containerd/firecracker-control/client"
 	"github.com/firecracker-microvm/firecracker-containerd/proto"
 	"github.com/firecracker-microvm/firecracker-containerd/runtime/firecrackeroci"
@@ -108,11 +108,25 @@ func getImageURL(image string) string {
 	if strings.Contains(image, ".") {
 		return image
 	}
-	return "docker.io/" + image
 
+	// Handle local registry (e.g., localhost:5000)
+	if strings.HasPrefix(image, "localhost:") {
+		return image
+	}
+
+	return "docker.io/" + image
 }
 
-func (orch *Orchestrator) getContainerImage(imageName string) (*containerd.Image, error) {
+func (orch *Orchestrator) getContainerImage(vmID, imageName, dockerMetadataTemplate, dockerHost, dockerUser, dockerPass string) (*containerd.Image, error) {
+	log.Println("Setting docker credential metadata")
+	_, err := orch.fcClient.SetVMMetadata(orch.ctx, &proto.SetVMMetadataRequest{
+		VMID:     vmID,
+		Metadata: fmt.Sprintf(dockerMetadataTemplate, dockerHost, dockerUser, dockerPass),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting docker credential metadata: %w", err)
+	}
+	
 	image, found := orch.cachedImages[imageName]
 	if !found {
 		var err error
@@ -123,8 +137,12 @@ func (orch *Orchestrator) getContainerImage(imageName string) (*containerd.Image
 			Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 			Client: http.DefaultClient,
 		}
-		image, err = orch.client.Pull(orch.ctx, imageURL, containerd.WithPullUnpack, containerd.WithPullSnapshotter(snapshotter),
-			containerd.WithResolver(docker.NewResolver(options)))
+		image, err = orch.client.Pull(orch.ctx, imageURL, 
+			containerd.WithPullUnpack, 
+			containerd.WithPullSnapshotter(snapshotter),
+			containerd.WithResolver(docker.NewResolver(options)),
+			// stargz labels to tell the snapshotter to lazily load the image
+			containerd.WithImageHandlerWrapper(source.AppendDefaultLabelsHandlerWrapper(imageURL, 10*1024*1024)))
 
 		if err != nil {
 			return nil, errors.Wrapf(err, "pulling image")
@@ -212,7 +230,14 @@ func (orch *Orchestrator) startContainer(vmID, snapKey, imageName string, image 
 		containerd.WithSnapshotter(orch.snapshotter),
 		containerd.WithNewSnapshot(snapKey, *image),
 		containerd.WithNewSpec(
-			oci.WithImageConfig(*image),
+			// We can't use the regular oci.WithImageConfig from containerd
+			// because it will attempt to get UIDs and GIDs from inside the
+			// container by mounting the container's filesystem. With remote
+			// snapshotters, that filesystem is inside a VM and inaccessible
+			// to the host. The firecrackeroci variation instructs the
+			// firecracker-containerd agent that runs inside the VM to perform
+			// those UID/GID lookups because it has access to the container's filesystem
+			firecrackeroci.WithVMLocalImageConfig(*image),
 			firecrackeroci.WithVMID(vmID),
 			firecrackeroci.WithVMNetwork,
 		),
