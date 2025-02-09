@@ -40,7 +40,7 @@ fi
 
 $SCRIPTS/utils/disable_auto_updates.sh
 
-source $SCRIPTS/install_go.sh
+# source $SCRIPTS/install_go.sh
 $SCRIPTS/setup_system.sh
 
 sudo mkdir -p /etc/vhive-cri

@@ -359,11 +359,11 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	//	return fmt.Errorf("resuming container snapshot device: %w", err)
 	//}
 
-	log.Println("Committing container snapshot")
-	err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
-	if err != nil {
-		return fmt.Errorf("committing container snapshot: %w", err)
-	}
+	// log.Println("Committing container snapshot")
+	// err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
+	// if err != nil {
+	// 	return fmt.Errorf("committing container snapshot: %w", err)
+	// }
 
 	log.Println("Resuming VM")
 	if _, err := orch.fcClient.ResumeVM(orch.ctx, &proto.ResumeVMRequest{VMID: vmID}); err != nil {
@@ -405,25 +405,25 @@ func (orch *Orchestrator) restoreSnapInfo(vmID, snapshotKey, infoFile string) (*
 }
 
 func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
-	snapKey := getSnapKey(vmID)
+	// snapKey := getSnapKey(vmID)
 
-	log.Println("Restoring snapshot information")
-	vmInfo, err := orch.restoreSnapInfo(vmID, snapKey, filepath.Join(orch.snapshotManager.BasePath, revision, "infofile"))
-	if err != nil {
-		return fmt.Errorf("restoring snapshot information: %w", err)
-	}
+	// log.Println("Restoring snapshot information")
+	// vmInfo, err := orch.restoreSnapInfo(vmID, snapKey, filepath.Join(orch.snapshotManager.BasePath, revision, "infofile"))
+	// if err != nil {
+	// 	return fmt.Errorf("restoring snapshot information: %w", err)
+	// }
 
-	log.Println("Pulling container snapshot commit")
-	img, err := orch.pullCtrSnapCommit(vmInfo.ctrSnapCommitName)
-	if err != nil {
-		return fmt.Errorf("pulling container snapshot commit: %w", err)
-	}
+	// log.Println("Pulling container snapshot commit")
+	// img, err := orch.pullCtrSnapCommit(vmInfo.ctrSnapCommitName)
+	// if err != nil {
+	// 	return fmt.Errorf("pulling container snapshot commit: %w", err)
+	// }
 
-	log.Println("Creating container snapshot")
-	ctrSnapMount, err := orch.createCtrSnap(snapKey, *img)
-	if err != nil {
-		return fmt.Errorf("creating container snapshot: %w", err)
-	}
+	// log.Println("Creating container snapshot")
+	// ctrSnapMount, err := orch.createCtrSnap(snapKey, *img)
+	// if err != nil {
+	// 	return fmt.Errorf("creating container snapshot: %w", err)
+	// }
 
 	createVMRequest := &proto.CreateVMRequest{
 		VMID: vmID,
@@ -447,11 +447,11 @@ func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
 		LoadSnapshot:          true,
 		MemFilePath:           filepath.Join(orch.snapshotManager.BasePath, revision, "memfile"),
 		SnapshotPath:          filepath.Join(orch.snapshotManager.BasePath, revision, "snapfile"),
-		ContainerSnapshotPath: ctrSnapMount.Source,
+		//ContainerSnapshotPath: ctrSnapMount.Source,
 	}
 
 	log.Println("Creating firecracker VM from snapshot")
-	_, err = orch.fcClient.CreateVM(orch.ctx, createVMRequest)
+	_, err := orch.fcClient.CreateVM(orch.ctx, createVMRequest)
 	if err != nil {
 		return fmt.Errorf("creating firecracker VM: %w", err)
 	}
