@@ -7,23 +7,23 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/containerd/nerdctl/pkg/imgutil/commit"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
+	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/nerdctl/pkg/imgutil/commit"
 	"github.com/containerd/stargz-snapshotter/fs/source"
 	fcclient "github.com/firecracker-microvm/firecracker-containerd/firecracker-control/client"
 	"github.com/firecracker-microvm/firecracker-containerd/proto"
 	"github.com/firecracker-microvm/firecracker-containerd/runtime/firecrackeroci"
 	"github.com/opencontainers/image-spec/identity"
 	"github.com/pkg/errors"
-	"github.com/vhive-serverless/vhive/networking"
 	"github.com/vhive-serverless/remote-firecracker-snapshots-poc/snapshotting"
+	"github.com/vhive-serverless/vhive/networking"
 	"log"
 	"path/filepath"
 	"strings"
@@ -126,7 +126,7 @@ func (orch *Orchestrator) getContainerImage(vmID, imageName, dockerMetadataTempl
 	if err != nil {
 		return nil, fmt.Errorf("setting docker credential metadata: %w", err)
 	}
-	
+
 	image, found := orch.cachedImages[imageName]
 	if !found {
 		var err error
@@ -137,8 +137,8 @@ func (orch *Orchestrator) getContainerImage(vmID, imageName, dockerMetadataTempl
 			Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 			Client: http.DefaultClient,
 		}
-		image, err = orch.client.Pull(orch.ctx, imageURL, 
-			containerd.WithPullUnpack, 
+		image, err = orch.client.Pull(orch.ctx, imageURL,
+			containerd.WithPullUnpack,
 			containerd.WithPullSnapshotter(snapshotter),
 			containerd.WithResolver(docker.NewResolver(options)),
 			// stargz labels to tell the snapshotter to lazily load the image
@@ -200,13 +200,14 @@ func (orch *Orchestrator) createVM(vmID string) error {
 			MemSizeMib: 2048,
 		},
 		NetworkInterfaces: []*proto.FirecrackerNetworkInterface{{
+			AllowMMDS: true,
 			StaticConfig: &proto.StaticNetworkConfiguration{
 				MacAddress:  macAddress,
 				HostDevName: hostDevName,
 				IPConfig: &proto.IPConfiguration{
 					PrimaryAddr: orch.networkManager.GetConfig(vmID).GetContainerCIDR(),
 					GatewayAddr: orch.networkManager.GetConfig(vmID).GetGatewayIP(),
-					Nameservers: []string{"8.8.8.8"},
+					Nameservers: []string{"8.8.8.8", "1.1.1.1"},
 				},
 			},
 		}},
@@ -296,7 +297,7 @@ func (orch *Orchestrator) commitCtrSnap(vmID, snapCommitName string) error {
 		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 		Client: http.DefaultClient,
 	}
-	err = orch.client.Push(orch.ctx, fmt.Sprintf("localhost:5000/%s:latest", snapCommitName),
+	err = orch.client.Push(orch.ctx, fmt.Sprintf("hp114.utah.cloudlab.us:5000/%s:latest", snapCommitName),
 		img.Target(), containerd.WithResolver(docker.NewResolver(options)))
 	if err != nil {
 		return fmt.Errorf("pushing container snapshot patch: %w", err)
@@ -312,7 +313,7 @@ func (orch *Orchestrator) pullCtrSnapCommit(snapCommitName string) (*containerd.
 		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
 		Client: http.DefaultClient,
 	}
-	img, err := orch.client.Pull(orch.ctx, fmt.Sprintf("localhost:5000/%s:latest", snapCommitName),
+	img, err := orch.client.Pull(orch.ctx, fmt.Sprintf("hp114.utah.cloudlab.us:5000/%s:latest", snapCommitName),
 		containerd.WithPullUnpack, containerd.WithPullSnapshotter(snapshotter),
 		containerd.WithResolver(docker.NewResolver(options)))
 	if err != nil {
@@ -359,11 +360,11 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	//	return fmt.Errorf("resuming container snapshot device: %w", err)
 	//}
 
-	// log.Println("Committing container snapshot")
-	// err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
-	// if err != nil {
-	// 	return fmt.Errorf("committing container snapshot: %w", err)
-	// }
+	//log.Println("Committing container snapshot")
+	//err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
+	//if err != nil {
+	//	return fmt.Errorf("committing container snapshot: %w", err)
+	//}
 
 	log.Println("Resuming VM")
 	if _, err := orch.fcClient.ResumeVM(orch.ctx, &proto.ResumeVMRequest{VMID: vmID}); err != nil {
@@ -405,25 +406,25 @@ func (orch *Orchestrator) restoreSnapInfo(vmID, snapshotKey, infoFile string) (*
 }
 
 func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
-	// snapKey := getSnapKey(vmID)
+	//snapKey := getSnapKey(vmID)
 
-	// log.Println("Restoring snapshot information")
-	// vmInfo, err := orch.restoreSnapInfo(vmID, snapKey, filepath.Join(orch.snapshotManager.BasePath, revision, "infofile"))
-	// if err != nil {
-	// 	return fmt.Errorf("restoring snapshot information: %w", err)
-	// }
+	//log.Println("Restoring snapshot information")
+	//vmInfo, err := orch.restoreSnapInfo(vmID, snapKey, filepath.Join(orch.snapshotManager.BasePath, revision, "infofile"))
+	//if err != nil {
+	//	return fmt.Errorf("restoring snapshot information: %w", err)
+	//}
 
-	// log.Println("Pulling container snapshot commit")
-	// img, err := orch.pullCtrSnapCommit(vmInfo.ctrSnapCommitName)
-	// if err != nil {
-	// 	return fmt.Errorf("pulling container snapshot commit: %w", err)
-	// }
+	//log.Println("Pulling container snapshot commit")
+	//img, err := orch.pullCtrSnapCommit(vmInfo.ctrSnapCommitName)
+	//if err != nil {
+	//	return fmt.Errorf("pulling container snapshot commit: %w", err)
+	//}
 
-	// log.Println("Creating container snapshot")
-	// ctrSnapMount, err := orch.createCtrSnap(snapKey, *img)
-	// if err != nil {
-	// 	return fmt.Errorf("creating container snapshot: %w", err)
-	// }
+	//log.Println("Creating container snapshot")
+	//ctrSnapMount, err := orch.createCtrSnap(snapKey, *img)
+	//if err != nil {
+	//	return fmt.Errorf("creating container snapshot: %w", err)
+	//}
 
 	createVMRequest := &proto.CreateVMRequest{
 		VMID: vmID,
@@ -443,10 +444,10 @@ func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
 				},
 			},
 		}},
-		NetNS:                 orch.networkManager.GetConfig(vmID).GetNamespacePath(),
-		LoadSnapshot:          true,
-		MemFilePath:           filepath.Join(orch.snapshotManager.BasePath, revision, "memfile"),
-		SnapshotPath:          filepath.Join(orch.snapshotManager.BasePath, revision, "snapfile"),
+		NetNS:        orch.networkManager.GetConfig(vmID).GetNamespacePath(),
+		LoadSnapshot: true,
+		MemFilePath:  filepath.Join(orch.snapshotManager.BasePath, revision, "memfile"),
+		SnapshotPath: filepath.Join(orch.snapshotManager.BasePath, revision, "snapfile"),
 		//ContainerSnapshotPath: ctrSnapMount.Source,
 	}
 
