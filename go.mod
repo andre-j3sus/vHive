@@ -2,17 +2,10 @@ module github.com/vhive-serverless/vhive
 
 go 1.22.9
 
-// Copied from firecracker-containerd
-replace (
-	// Pin gPRC-related dependencies as like containerd v1.6.20
-	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63
-	google.golang.org/grpc => google.golang.org/grpc v1.38.1
-)
-
 replace github.com/coreos/go-systemd => github.com/coreos/go-systemd v0.0.0-20161114122254-48702e0da86b
 
 replace (
-	github.com/firecracker-microvm/firecracker-containerd => github.com/vhive-serverless/firecracker-containerd v0.0.0-20230912063208-ad6383f05e45
+	github.com/firecracker-microvm/firecracker-containerd => github.com/andre-j3sus/firecracker-containerd v0.0.0-20241216172753-4d3d867d9dac
 	github.com/vhive-serverless/vhive/examples/protobuf/helloworld => ./examples/protobuf/helloworld
 )
 
