@@ -39,7 +39,7 @@ entire image. This is useful when you have a large image and you only need a few
    install in `configs/setup/system.json` as `GoVersion`):
 
     ```bash
-    ./scripts/install_go.sh
+    ./scripts/install_go.sh; source /etc/profile
     ```
 
 3. Install docker: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository and don't forget the
@@ -48,7 +48,7 @@ entire image. This is useful when you have a large image and you only need a few
 4. Setup the environment:
 
     ```bash
-    ./scripts/cloudlab/setup_node.sh; source /etc/profile
+    ./scripts/cloudlab/setup_node.sh
     ```
 
 5. Build the go program and create the folder to store the snapshots:
