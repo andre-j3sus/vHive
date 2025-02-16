@@ -77,6 +77,11 @@ func (mgr *SnapshotManager) UploadSnapshot(revision string) error {
 func (mgr *SnapshotManager) DownloadSnapshot(revision string) error {
 	snap := NewSnapshot(revision, mgr.BasePath)
 
+	baseFolder := snap.GetBaseFolder()
+	if err := os.MkdirAll(baseFolder, os.ModePerm); err != nil {
+		return errors.Wrapf(err, "creating base folder %s", baseFolder)
+	}
+
 	files := []string{"memfile", "snapfile", "infofile"}
 	for _, file := range files {
 		filePath := filepath.Join(snap.GetBaseFolder(), file)
