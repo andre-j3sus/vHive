@@ -52,13 +52,15 @@ type Orchestrator struct {
 	networkManager  *networking.NetworkManager
 	snapshotManager *snapshotting.SnapshotManager
 
+	useRemoteStorage bool
+
 	// Namespace for requests to containerd  API. Allows multiple consumers to use the same containerd without
 	// conflicting eachother. Benefit of sharing content but still having separation with containers and images
 	ctx context.Context
 }
 
 // NewOrchestrator Initializes a new orchestrator
-func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder string) (*Orchestrator, error) {
+func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket string, useRemoteStorage bool) (*Orchestrator, error) {
 	var err error
 
 	orch := new(Orchestrator)
@@ -71,7 +73,12 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder string) (
 		return nil, errors.Wrapf(err, "creating network manager")
 	}
 
-	orch.snapshotManager = snapshotting.NewSnapshotManager(snapsBaseFolder)
+	orch.useRemoteStorage = useRemoteStorage
+	orch.snapshotManager, err = snapshotting.NewSnapshotManager(snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket, useRemoteStorage)
+	if err != nil {
+		return nil, errors.Wrapf(err, "creating snapshot manager")
+	}
+
 	err = orch.snapshotManager.RecoverSnapshots(snapsBaseFolder)
 	if err != nil {
 		return nil, errors.Wrapf(err, "recovering snapshots")
@@ -385,6 +392,15 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 		return fmt.Errorf("serializing snapshot information: %w", err)
 	}
 
+	if orch.useRemoteStorage {
+		log.Println("Uploading snapshot to remote storage")
+		
+		err := orch.snapshotManager.UploadSnapshot(revision)
+		if err != nil {
+			return fmt.Errorf("uploading snapshot to remote storage: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -425,6 +441,19 @@ func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
 	//if err != nil {
 	//	return fmt.Errorf("creating container snapshot: %w", err)
 	//}
+	
+	if _, err := orch.snapshotManager.GetSnapshot(revision); err != nil {
+		if orch.useRemoteStorage {
+			log.Println("Downloading snapshot from remote storage")
+
+			err := orch.snapshotManager.DownloadSnapshot(revision)
+			if err != nil {
+				return fmt.Errorf("failed to download snapshot from remote storage: %w", err)
+			}
+		} else {
+			return fmt.Errorf("snapshot %s not found locally and remote storage is disabled", revision)
+		}
+	}
 
 	createVMRequest := &proto.CreateVMRequest{
 		VMID: vmID,

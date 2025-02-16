@@ -1,10 +1,16 @@
 package snapshotting
 
 import (
+	"context"
 	"fmt"
 	"github.com/pkg/errors"
+	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // Use K_REVISION environment variable as identifier for snapshot (https://github.com/amohoste/podspeed-vhive/blob/c74ca6ced1579d1c4f5414f3a28a8ffceb7b544f/pkg/pod/types/vhive.go#L46)
@@ -12,13 +18,29 @@ type SnapshotManager struct {
 	snapshots        map[string]Snapshot // maps revision id to snapshot
 	availableSizeMiB string
 	BasePath         string
+
+	minioClient *minio.Client
+	bucketName  string
 }
 
-func NewSnapshotManager(baseFolder string) *SnapshotManager {
+func NewSnapshotManager(baseFolder, minioEndpoint, accessKey, secretKey, bucket string, useRemoteStorage bool) (*SnapshotManager, error) {
 	manager := new(SnapshotManager)
 	manager.snapshots = make(map[string]Snapshot)
 	manager.BasePath = baseFolder
-	return manager
+
+	if useRemoteStorage {
+		minioClient, err := minio.New(minioEndpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+			Secure: false,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "creating MinIO client")
+		}
+		manager.minioClient = minioClient
+		manager.bucketName = bucket
+	}
+	
+	return manager, nil
 }
 
 func (mgr *SnapshotManager) GetSnapshot(revision string) (*Snapshot, error) {
@@ -28,6 +50,53 @@ func (mgr *SnapshotManager) GetSnapshot(revision string) (*Snapshot, error) {
 	} else {
 		return nil, errors.New(fmt.Sprintf("Get: Snapshot for revision %s does not exist", revision))
 	}
+}
+
+func (mgr *SnapshotManager) UploadSnapshot(revision string) error {
+	snap, exists := mgr.snapshots[revision]
+	if !exists {
+		return fmt.Errorf("snapshot %s does not exist", revision)
+	}
+
+	files := []string{snap.GetMemFilePath(), snap.GetSnapFilePath(), snap.GetInfoFilePath()}
+	for _, file := range files {
+		fileReader, err := os.Open(file)
+		if err != nil {
+			return errors.Wrapf(err, "opening file %s", file)
+		}
+		defer fileReader.Close()
+
+		_, err = mgr.minioClient.PutObject(context.Background(), mgr.bucketName, filepath.Base(file), fileReader, -1, minio.PutObjectOptions{})
+		if err != nil {
+			return errors.Wrapf(err, "uploading %s to MinIO", file)
+		}
+	}
+	return nil
+}
+
+func (mgr *SnapshotManager) DownloadSnapshot(revision string) error {
+	snap := NewSnapshot(revision, mgr.BasePath)
+
+	files := []string{"memfile", "snapfile", "infofile"}
+	for _, file := range files {
+		filePath := filepath.Join(snap.GetBaseFolder(), file)
+		outFile, err := os.Create(filePath)
+		if err != nil {
+			return errors.Wrapf(err, "creating file %s", filePath)
+		}
+		defer outFile.Close()
+
+		obj, err := mgr.minioClient.GetObject(context.Background(), mgr.bucketName, file, minio.GetObjectOptions{})
+		if err != nil {
+			return errors.Wrapf(err, "downloading %s from MinIO", file)
+		}
+
+		if _, err := io.Copy(outFile, obj); err != nil {
+			return errors.Wrapf(err, "writing file %s", filePath)
+		}
+	}
+	mgr.snapshots[revision] = snap
+	return nil
 }
 
 func (mgr *SnapshotManager) RegisterSnap(revision string) (*Snapshot, error) {

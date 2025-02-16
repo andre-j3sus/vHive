@@ -1,10 +1,12 @@
 go 1.22.9
 
+toolchain go1.23.3
+
 use (
 	.
 	./power_manager
+	./remote-firecracker-snapshots-poc
 	./scripts
 	./scripts/github_runner
 	./scripts/openyurt-deployer
-	./remote-firecracker-snapshots-poc
 )
