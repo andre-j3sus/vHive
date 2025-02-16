@@ -12,18 +12,17 @@ entire image. This is useful when you have a large image and you only need a few
 
 - [Remote Firecracker Snapshots PoC](#remote-firecracker-snapshots-poc)
     - [Table of Contents](#table-of-contents)
-    - [Setup](#setup)
-        - [Setup Remote Registry](#setup-remote-registry)
-    - [Usage](#usage)
-        - [Boot a VM and take a snapshot](#boot-a-vm-and-take-a-snapshot)
-        - [Boot from a snapshot](#boot-from-a-snapshot)
-    - [Program Workflow](#program-workflow)
-        - [Boot a VM](#boot-a-vm)
-        - [Take a snapshot](#take-a-snapshot)
-        - [Boot from a snapshot](#boot-from-a-snapshot-1)
-    - [Current blockers](#current-blockers)
-        - [Hypothesis](#hypothesis)
-    - [Lazily Pulling Container Images using Stargz](#lazily-pulling-container-images-using-stargz)
+  - [Setup](#setup)
+    - [Setup Remote Registry](#setup-remote-registry)
+    - [Setup Stargz](#setup-stargz)
+    - [Setup Min IO](#setup-min-io)
+  - [Usage](#usage)
+    - [Boot a VM and take a snapshot](#boot-a-vm-and-take-a-snapshot)
+    - [Boot from a snapshot across different machines](#boot-from-a-snapshot-across-different-machines)
+  - [Program Workflow](#program-workflow)
+    - [Boot a VM](#boot-a-vm)
+    - [Take a snapshot](#take-a-snapshot)
+    - [Boot from a snapshot](#boot-from-a-snapshot)
 
 ## Setup
 
@@ -130,6 +129,12 @@ commands you would use with Docker.
     ```bash
     ./scripts/setup_demux_snapshotter.sh
     ```
+
+### Setup Min IO
+
+[MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. You can use MinIO to store the snapshots in a remote location.
+
+Follow this [guide](https://min.io/docs/minio/container/index.html) to start a MinIO server in a container using Docker.
 
 ---
 

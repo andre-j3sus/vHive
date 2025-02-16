@@ -38,6 +38,13 @@ func main() {
 	var keepalive = flag.Int("keepalive", 3600, "keepalive timeout")
 	var makeSnap = flag.Bool("make-snap", false, "bootstrap and make a snapshot")
 	var bootFromSnap = flag.Bool("boot-from-snap", false, "boot from snapshot")
+	
+	// MinIO-related flags for remote snapshot storage 
+	var useRemoteStorage = flag.Bool("use-remote-storage", false, "store snapshots remotely")
+	var minioEndpoint = flag.String("minio-endpoint", "localhost:9000", "MinIO server endpoint")
+	var accessKey = flag.String("minio-access-key", "minioadmin", "MinIO access key")
+	var secretKey = flag.String("minio-secret-key", "minioadmin", "MinIO secret key")
+	var bucket = flag.String("minio-bucket", "snapshots", "MinIO bucket name")
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	flag.Parse()
@@ -58,16 +65,16 @@ func main() {
 		log.Fatal("Incorrect usage. 'revision' needs to be specified")
 	}
 
-	if err := taskWorkflow(*vmID, *image, *revision, *snapsBasePath, *keepalive, *makeSnap, *bootFromSnap); err != nil {
+	if err := taskWorkflow(*vmID, *image, *revision, *snapsBasePath, *keepalive, *makeSnap, *bootFromSnap, *useRemoteStorage, *minioEndpoint, *accessKey, *secretKey, *bucket); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, makeSnap, bootFromSnap bool) (err error) {
+func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, makeSnap, bootFromSnap, useRemoteStorage bool, minioEndpoint, accessKey, secretKey, bucket string) error {
 	log.Println("Creating orchestrator")
 	// The example http-address-resolver assumes that the containerd namespace
 	// is the sames as the VM ID.
-	orch, err := NewOrchestrator(snapshotter, vmID, snapsBasePath)
+	orch, err := NewOrchestrator(snapshotter, vmID, snapsBasePath, minioEndpoint, accessKey, secretKey, bucket, useRemoteStorage)
 	if err != nil {
 		return fmt.Errorf("creating orchestrator: %w", err)
 	}
