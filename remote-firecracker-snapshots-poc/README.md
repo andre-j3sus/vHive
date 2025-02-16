@@ -134,8 +134,13 @@ commands you would use with Docker.
 
 [MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. You can use MinIO to store the snapshots in a remote location.
 
-Follow this [guide](https://min.io/docs/minio/container/index.html) to start a MinIO server in a container using Docker.
+Follow this [guide](https://min.io/docs/minio/container/index.html) to start a MinIO server in a container using Docker:
 
+```bash
+mkdir -p ${HOME}/minio/data
+
+docker run --network host -e "MINIO_ROOT_USER=ROOTUSER" -e "MINIO_ROOT_PASSWORD=CHANGEME123" --name minio1 quay.io/minio/minio server /data --console-address ":9001"
+```
 ---
 
 ## Usage
@@ -162,7 +167,7 @@ sudo http-address-resolver
 
     ```bash
     # Usage: sudo ./remote-firecracker-snapshots-poc -make-snap -id "<VM ID>" -image "<URI>" -revision "<revision ID>" -snapshots-base-path "<path/to/snapshots/folder>"
-    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -make-snap -id "vm1" -image "hp172.utah.cloudlab.us:5000/curiousgeorgiy/nginx:1.17-alpine-esgz" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" # Port 80
+    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -make-snap -id "vm1" -image "hp172.utah.cloudlab.us:5000/curiousgeorgiy/nginx:1.17-alpine-esgz" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" -use-remote-storage -minio-access-key "ROOTUSER" -minio-secret-key "CHANGEME123" # Port 80
     ```
 
    This will start a VM with the specified image and create a snapshot of the VM's state. The snapshot will be stored in
@@ -197,7 +202,7 @@ sudo http-address-resolver
 
     ```bash
     # sudo ./remote-firecracker-snapshots-poc -boot-from-snap -id "<VM ID>" -revision "<revision ID>" -snapshots-base-path "<path/to/snapshots/folder>"
-    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -boot-from-snap -id "vm5" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps"
+    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -boot-from-snap -id "vm5" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" -use-remote-storage -minio-access-key "ROOTUSER" -minio-secret-key "CHANGEME123"
     ```
 
    This will boot a VM from the specified snapshot. The VM will be started with the same state as when the snapshot was
