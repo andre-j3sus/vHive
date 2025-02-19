@@ -69,26 +69,29 @@ For this, you need to have **containerd** and **nerdctl** installed on the node.
 provides a Docker-compatible command-line interface for containerd, which is nice because it allows you to use the same
 commands you would use with Docker.
 
-1. Install nerdctl: https://gist.github.com/Faheetah/4baf1e413691bc4e7784fad16d6275a9 or execute the following commands:
+0. [Optional] Install nerdctl:
 
     ```bash
     sudo sh ./scripts/install_nerdctl.sh
     ```
 
-2. Start containerd and run the registry:
+
+1. Start the registry using docker or nerdctl:
 
     ```bash
+    docker run -d --network host --name registry registry:2
+    # or
     sudo containerd &
     sudo nerdctl run -d -p 5000:5000 --name registry registry:2
     ```
 
-3. Test the registry by curling the registry's URL:
+2. Test the registry by curling the registry's URL:
 
     ```bash
     curl http://localhost:5000/v2/_catalog # Should return {"repositories":[]}
     ```
 
-4. Update the `remote-firecracker-snapshots-poc` program to use the remote registry:
+3. Update the `remote-firecracker-snapshots-poc` program to use the remote registry:
     1. Update the `commitCtrSnap` and `pullCtrSnapCommit` methods in `orchestrator.go` to use the remote registry.
     2. If it's a local registry, you don't need to make any changes. If it's a remote registry, you need to update the
        URL from `localhost:5000` to `<remote IP>:5000`, e.g., `hp090.utah.cloudlab.us:5000`.
@@ -100,6 +103,8 @@ commands you would use with Docker.
     sudo nerdctl tag docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
     sudo nerdctl push localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
     ```
+
+    **Note**: for this step, it's recommended to use nerdctl instead of docker, because it seems that docker may corrupt the estargz images, causing an error when starting containers from them.
 
 ### Setup Stargz
 
@@ -141,6 +146,21 @@ mkdir -p ${HOME}/minio/data
 
 docker run --network host -e "MINIO_ROOT_USER=ROOTUSER" -e "MINIO_ROOT_PASSWORD=CHANGEME123" --name minio1 quay.io/minio/minio server /data --console-address ":9001"
 ```
+
+And install the MinIO client:
+
+```bash
+wget https://dl.min.io/client/mc/release/linux-amd64/mc
+chmod +x mc
+sudo mv mc /usr/local/bin/mc
+```
+
+Finally, create a bucket:
+
+```bash
+mc mb myminio/snapshots
+```
+
 ---
 
 ## Usage

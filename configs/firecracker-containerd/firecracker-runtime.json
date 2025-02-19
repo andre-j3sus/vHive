@@ -4,6 +4,6 @@
   "kernel_args": "console=ttyS0 noapic reboot=k panic=1 pci=off nomodules ro systemd.journald.forward_to_console systemd.unit=firecracker.target init=/sbin/overlay-init",
   "root_drive": "/var/lib/firecracker-containerd/runtime/rootfs-stargz.img",
   "cpu_template": "T2",
-  "log_levels": ["debug"],
+  "log_levels": ["debug","firecracker:debug","firecracker-containerd:debug"],
   "debug": true
 }
