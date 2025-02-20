@@ -153,6 +153,7 @@ And install the MinIO client:
 wget https://dl.min.io/client/mc/release/linux-amd64/mc
 chmod +x mc
 sudo mv mc /usr/local/bin/mc
+mc alias set myminio http://localhost:9000 ROOTUSER CHANGEME123
 ```
 
 Finally, create a bucket:
