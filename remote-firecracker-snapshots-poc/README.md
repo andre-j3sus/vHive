@@ -1,174 +1,179 @@
 # Remote Firecracker Snapshots PoC
 
-This guide provides instructions on how to create and boot from snapshots using the remote-firecracker-snapshots-poc
-program, with the Stargz containerd snapshotter.
-This program is a proof of concept that demonstrates the creation and booting of snapshots stored in a remote location.
+This guide explains how to create and boot firecracker-containerd VMs from snapshots with the Stargz containerd snapshotter. This proof-of-concept (PoC) demonstrates how to create snapshots and retrieve/boot them from a remote storage location.
 
-[Stargz](https://github.com/containerd/stargz-snapshotter) is a container image format that allows you to lazily pull
-container images. This means that you can pull only the layers you need to run a container, instead of pulling the
-entire image. This is useful when you have a large image and you only need a few layers to run a container.
+[Stargz](https://github.com/containerd/stargz-snapshotter) is a containerd snapshotter that enables lazy pulling of container images. Instead of downloading an entire image, you can pull only the necessary layers to run a container. This functionality is powered by [eStargz](https://github.com/containerd/stargz-snapshotter/blob/main/docs/stargz-estargz.md), a lazily pullable image format introduced by the Stargz project.
 
 ### Table of Contents
 
 - [Remote Firecracker Snapshots PoC](#remote-firecracker-snapshots-poc)
-    - [Table of Contents](#table-of-contents)
+  - [Table of Contents](#table-of-contents)
   - [Setup](#setup)
-    - [Setup Remote Registry](#setup-remote-registry)
-    - [Setup Stargz](#setup-stargz)
-    - [Setup Min IO](#setup-min-io)
+    - [Setting Up a Registry](#setting-up-a-registry)
+    - [Setting Up Stargz](#setting-up-stargz)
+      - [eStargz Images](#estargz-images)
+    - [Setting Up MinIO](#setting-up-minio)
   - [Usage](#usage)
-    - [Boot a VM and take a snapshot](#boot-a-vm-and-take-a-snapshot)
-    - [Boot from a snapshot across different machines](#boot-from-a-snapshot-across-different-machines)
+    - [Booting a VM and Taking a Snapshot](#booting-a-vm-and-taking-a-snapshot)
+    - [Booting a VM from a Snapshot](#booting-a-vm-from-a-snapshot)
   - [Program Workflow](#program-workflow)
-    - [Boot a VM](#boot-a-vm)
-    - [Take a snapshot](#take-a-snapshot)
-    - [Boot from a snapshot](#boot-from-a-snapshot)
+    - [Booting a VM](#booting-a-vm)
+    - [Taking a Snapshot](#taking-a-snapshot)
+    - [Booting from a Snapshot](#booting-from-a-snapshot)
 
 ## Setup
 
-1. Clone the vHive repository and checkout the `remote-snapshots-stargz` branch:
+Follow these steps to set up the environment for using remote firecracker-containerd snapshots with Stargz:
 
-    ```bash
-    git clone https://github.com/andre-j3sus/vHive.git vhive
-    cd vhive
-    git checkout remote-snapshots-stargz
-    ```
+1. Clone the vHive repository and checkout to the `remote-snapshots-stargz` branch:
 
-2. Install go by running the following command (This will install version `1.23.3`. You can configure the version to
-   install in `configs/setup/system.json` as `GoVersion`):
+   ```bash
+   git clone https://github.com/andre-j3sus/vHive.git vhive
+   cd vhive
+   git checkout remote-snapshots-stargz
+   ```
 
-    ```bash
-    ./scripts/install_go.sh; source /etc/profile
-    ```
+2. Run the following command to install Go (default version: `1.23.3`). You can change the version by modifying `GoVersion` in `configs/setup/system.json`:
 
-3. Install docker: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository and don't forget the
-   post-installation steps: https://docs.docker.com/engine/install/linux-postinstall/
+   ```bash
+   ./scripts/install_go.sh; source /etc/profile
+   ```
 
-4. Setup the environment:
+3. Install Docker by following the official [Docker installation guide for Ubuntu](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository). After installation, complete the [post-installation steps](https://docs.docker.com/engine/install/linux-postinstall/) to manage Docker as a non-root user.
 
-    ```bash
-    ./scripts/cloudlab/setup_node.sh
-    ```
+4. Run the setup script to configure the environment. This assumes that you are using a CloudLab node:
 
-5. Build the go program and create the folder to store the snapshots:
+   ```bash
+   ./scripts/cloudlab/setup_node.sh
+   ```
 
-    ```bash
-    cd remote-firecracker-snapshots-poc
-    mkdir snaps
-    go build
-    ```
+5. Navigate to the remote-firecracker-snapshots-poc directory, create a folder for storing snapshots, and build the Go program:
 
-### Setup Remote Registry
+   ```bash
+   cd remote-firecracker-snapshots-poc
+   mkdir snaps
+   go build
+   ```
 
-This program uses a registry to store the container images created when taking snapshots. By default, the program uses a
-local registry running on the same machine.
+### Setting Up a Registry
 
-You can use the [`registry:2`](https://hub.docker.com/_/registry) image to run a registry.
+This program retrieves container images from a registry. You can use a public registry such as Docker Hub or GitHub Container Registry, or set up your own using the [`registry:2`](https://hub.docker.com/_/registry) image.
 
-For this, you need to have **containerd** and **nerdctl** installed on the node. Nerctl is a CLI for containerd that
-provides a Docker-compatible command-line interface for containerd, which is nice because it allows you to use the same
-commands you would use with Docker.
+To run a local registry, you need containerd and a container runtime like Docker or nerdctl. [nerdctl](https://github.com/containerd/nerdctl) is a CLI for containerd that provides a Docker-compatible interface, allowing you to use familiar Docker commands.
 
-0. [Optional] Install nerdctl:
+1. [Optional] Install nerdctl:
 
-    ```bash
-    sudo sh ./scripts/install_nerdctl.sh
-    ```
+   ```bash
+   sudo sh ./scripts/install_nerdctl.sh
+   ```
 
+2. Start the registry using either docker or nerdctl:
 
-1. Start the registry using docker or nerdctl:
+   ```bash
+   docker run -d --network host --name registry registry:2
+   # or
+   sudo nerdctl run -d -p 5000:5000 --name registry registry:2
+   ```
 
-    ```bash
-    docker run -d --network host --name registry registry:2
-    # or
-    sudo containerd &
-    sudo nerdctl run -d -p 5000:5000 --name registry registry:2
-    ```
+3. Check if the registry is running by making a request to its API:
 
-2. Test the registry by curling the registry's URL:
+   ```bash
+   curl http://localhost:5000/v2/_catalog # Should return {"repositories":[]}
+   ```
 
-    ```bash
-    curl http://localhost:5000/v2/_catalog # Should return {"repositories":[]}
-    ```
+4. You can pull an image from Docker Hub and push it to your local registry.
 
-3. Update the `remote-firecracker-snapshots-poc` program to use the remote registry:
-    1. Update the `commitCtrSnap` and `pullCtrSnapCommit` methods in `orchestrator.go` to use the remote registry.
-    2. If it's a local registry, you don't need to make any changes. If it's a remote registry, you need to update the
-       URL from `localhost:5000` to `<remote IP>:5000`, e.g., `hp090.utah.cloudlab.us:5000`.
+   > **Note:** It is recommended to use nerdctl instead of Docker for this step because Docker may corrupt eStargz images, leading to errors when starting containers.
 
-   Now you can pull an image from Docker Hub, and push it to the registry, for example:
+   ```bash
+   sudo nerdctl pull docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz
+   sudo nerdctl tag docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
+   sudo nerdctl push localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
+   ```
 
-    ```bash
-    sudo nerdctl pull docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz
-    sudo nerdctl tag docker.io/curiousgeorgiy/nginx:1.17-alpine-esgz localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
-    sudo nerdctl push localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
-    ```
+### Setting Up Stargz
 
-    **Note**: for this step, it's recommended to use nerdctl instead of docker, because it seems that docker may corrupt the estargz images, causing an error when starting containers from them.
+1. Build the rootfs with the stargz snapshotter. Follow the steps in [Getting started with remote snapshotters in firecracker-containerd](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md):
 
-### Setup Stargz
+   1. Clone the [firecracker-containerd](https://github.com/andre-j3sus/firecracker-containerd) repository.
 
-1. Build the rootfs with the stargz snapshotter. Following
-   the [Getting started with remote snapshotters in firecracker-containerd](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md)
-   guide:
+      > **Note:** A minor adjustment was made to the example code to allow pulling images from Docker Hub and insecure registries. The official example only permits images from GitHub Container Registry.
 
-    1. Clone the firecracker-containerd repository. I had to make a small adjustment in the example code to allow us to
-       pull
-       images from Docker Hub, or an insecure registry (the official example only allows images from GitHub Container
-       Registry):
+      ```bash
+      git clone --recurse-submodules https://github.com/andre-j3sus/firecracker-containerd
+      ```
 
-       ```bash
-       git clone --recurse-submodules https://github.com/andre-j3sus/firecracker-containerd
-       ```
+   2. Build and install the stargz snapshotter image. To enable Stargz to pull images from your local registry, edit `firecracker-containerd/tools/image-builder/files_stargz/etc/containerd-stargz-grpc/config.toml`, and then run the following commands:
 
-    2. Build and install the stargz snapshotter image. If you want to allow stargz to pull from your local registry (steps described [above](#setup-remote-registry)), edit `firecracker-containerd/tools/image-builder/files_stargz/etc/containerd-stargz-grpc/config.toml` before running:
-
-        ```bash
-        make
-        make image-stargz
-        make install-stargz-rootfs
-       ```
+      ```bash
+      make
+      make image-stargz
+      make install-stargz-rootfs
+      ```
 
 2. Configure demux-snapshotter:
 
-    ```bash
-    ./scripts/setup_demux_snapshotter.sh
-    ```
+   ```bash
+   ./scripts/setup_demux_snapshotter.sh
+   ```
 
-### Setup Min IO
+#### eStargz Images
 
-[MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. You can use MinIO to store the snapshots in a remote location.
+The stargz snapshotter uses a new image format called [eStargz](https://github.com/containerd/stargz-snapshotter/blob/main/docs/estargz.md).
 
-Follow this [guide](https://min.io/docs/minio/container/index.html) to start a MinIO server in a container using Docker:
-
-```bash
-mkdir -p ${HOME}/minio/data
-
-docker run --network host -e "MINIO_ROOT_USER=ROOTUSER" -e "MINIO_ROOT_PASSWORD=CHANGEME123" --name minio1 quay.io/minio/minio server /data --console-address ":9001"
-```
-
-And install the MinIO client:
+You can try to use their [pre-converted images](https://github.com/containerd/stargz-snapshotter/blob/main/docs/pre-converted-images.md), or [build your own using the BuildKit](https://github.com/containerd/stargz-snapshotter/tree/main?tab=readme-ov-file#building-estargz-images-using-buildkit). For example:
 
 ```bash
-wget https://dl.min.io/client/mc/release/linux-amd64/mc
-chmod +x mc
-sudo mv mc /usr/local/bin/mc
-mc alias set myminio http://localhost:9000 ROOTUSER CHANGEME123
+docker buildx build --tag devandrejesus/fibonacci-python:esgz --target fibonacciPython -f .\Dockerfile -o type=registry,oci-mediatypes=true,compression=estargz,force-compression=true ..\..\
 ```
 
-Finally, create a bucket:
+Alternatively, you can use [`ctr-remote`](https://github.com/containerd/stargz-snapshotter/tree/main?tab=readme-ov-file#creating-estargz-images-using-ctr-remote) to convert an existing image into eStargz while optimizing it for specific workloads.
 
-```bash
-mc mb myminio/snapshots
-```
+Here are some images that have already been converted to eStargz:
+
+- [fibonacci-python](https://hub.docker.com/r/devandrejesus/fibonacci-python)
+
+### Setting Up MinIO
+
+[MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. It can be used to store snapshots in a remote location.
+
+1. Follow the [official guide](https://min.io/docs/minio/container/index.html) to run a MinIO server inside a Docker container:
+
+   ```bash
+   mkdir -p ${HOME}/minio/data
+
+   docker run --network host \
+    -e "MINIO_ROOT_USER=ROOTUSER" \
+    -e "MINIO_ROOT_PASSWORD=CHANGEME123" \
+    --name minio1 \
+    quay.io/minio/minio server /data --console-address ":9001"
+   ```
+
+2. Install the MinIO Client (mc)
+
+   ```bash
+   wget https://dl.min.io/client/mc/release/linux-amd64/mc
+   chmod +x mc
+   sudo mv mc /usr/local/bin/mc
+   ```
+
+3. Set up an alias for your local MinIO instance:
+
+   ```bash
+   mc alias set myminio http://localhost:9000 ROOTUSER CHANGEME123
+   ```
+
+4. Create a bucket. This will create a bucket called `snapshots` in the MinIO server:
+
+   ```bash
+   mc mb myminio/snapshots
+   ```
 
 ---
 
 ## Usage
 
-Begin
-by [starting all of the host-daemons](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#start-all-of-the-host-daemons)
-(each in a separate shell):
+Before using the system, [start all necessary daemons](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#start-all-of-the-host-daemons) in separate terminals:
 
 ```bash
 sudo firecracker-containerd --config /etc/firecracker-containerd/config.toml
@@ -182,58 +187,96 @@ sudo demux-snapshotter
 sudo http-address-resolver
 ```
 
-### Boot a VM and take a snapshot
+### Booting a VM and Taking a Snapshot
 
 1. Run the `remote-firecracker-snapshots-poc` program with the `-make-snap` flag.
 
-    ```bash
-    # Usage: sudo ./remote-firecracker-snapshots-poc -make-snap -id "<VM ID>" -image "<URI>" -revision "<revision ID>" -snapshots-base-path "<path/to/snapshots/folder>"
-    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -make-snap -id "vm1" -image "hp172.utah.cloudlab.us:5000/curiousgeorgiy/nginx:1.17-alpine-esgz" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" -use-remote-storage -minio-access-key "ROOTUSER" -minio-secret-key "CHANGEME123" # Port 80
-    ```
+   ```bash
+   # Usage:
+   # sudo ./remote-firecracker-snapshots-poc -make-snap \
+   #    -id "<VM ID>" -image "<URI>" -revision "<revision ID>" \
+   #    -snapshots-base-path "<path/to/snapshots/folder>" -use-remote-storage \
+   #    -minio-access-key "<access key>" -minio-secret-key "<secret key>" \
+   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>"
 
-   This will start a VM with the specified image and create a snapshot of the VM's state. The snapshot will be stored in
-   the `snaps` folder. After the snapshot is created, the VM will keep running. This is an image of nginx running on
-   port `80`.
+   sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc \
+    -make-snap -id "vm1" \
+    -image "hp172.utah.cloudlab.us:5000/curiousgeorgiy/nginx:1.17-alpine-esgz" \
+    -revision "nginx-0" \
+    -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" \
+    -use-remote-storage -minio-access-key "ROOTUSER" \
+    -minio-secret-key "CHANGEME123" \
+    -minio-endpoint "localhost:9000" \
+    -minio-bucket "snapshots"
+   ```
 
-2. Now, the uVM is started and this is confirmed by the logs of firecracker-containerd, which also gives the IP address
-   of the uVM. Send a request to the VM using curl:
+   This will:
 
-    ```bash
-    curl http://<VM IP address>:<container port>
-    ```
+   1. Start a Firecracker VM running a container inside of it, using the specified container image.
+   2. Create a snapshot of the VM’s state and store it in the `snaps` folder (and in MinIO if `-use-remote-storage` is set).
+   3. Resume the VM.
 
-### Boot from a snapshot across different machines
+2. To confirm that the VM is running, check the Firecracker logs for its assigned IP address. Test the running VM by sending a request:
 
-1. Copy the snapshot files from the remote location to the local machine:
+   ```bash
+   curl http://<VM IP address>:<container port>
+   ```
 
-    ```bash
-    #rsync -avz <username>@<remote IP>:<path/to/snapshots/folder> <path/to/local/folder>
-    rsync -avz ajesus@hp090.utah.cloudlab.us:/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps/nginx-0/ /home/ajesus/Desktop/nginx-0/
-    ```
+### Booting a VM from a Snapshot
 
-   and then, move them to the other remote machine:
+A VM can be booted from a local or remote snapshot:
 
-    ```bash
-    rsync -avz /home/ajesus/Desktop/nginx-0/ ajesus@hp086.utah.cloudlab.us:/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps/nginx-0/
-    ```
+- Local Snapshot: The snapshot files are stored on the same machine.
+- Remote Snapshot: The snapshot files are stored in MinIO or another remote location.
 
-   If you want, you can use `sha256sum` to check if the files are the same on both machines: `sha256sum <file>`.
+For this, you need to perform the setup steps on two different machines. The first machine will take the snapshot, and the second machine will boot the VM from the snapshot.
+
+You can either use the `rsync` command to copy the snapshot files from one machine to another, or you can use MinIO to store the snapshots in a remote location.
+
+1. [Optional] Sync Snapshot Files Between Machines:
+
+   ```bash
+   # Copy snapshot files from source machine to local machine
+   # rsync -avz <username>@<remote IP>:<path/to/snapshots/folder> <path/to/local/folder>
+   rsync -avz ajesus@hp090.utah.cloudlab.us:/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps/nginx-0/ /home/ajesus/Desktop/nginx-0/
+
+   # Move snapshot files to the target machine
+   rsync -avz /home/ajesus/Desktop/nginx-0/ ajesus@hp086.utah.cloudlab.us:/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps/nginx-0/
+   ```
+
+   To verify file integrity, run:
+
+   ```bash
+   sha256sum <file>
+   ```
 
 2. Run the `remote-firecracker-snapshots-poc` program with the `-boot-from-snap` flag:
 
-    ```bash
-    # sudo ./remote-firecracker-snapshots-poc -boot-from-snap -id "<VM ID>" -revision "<revision ID>" -snapshots-base-path "<path/to/snapshots/folder>"
-    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc -boot-from-snap -id "vm5" -revision "nginx-0" -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" -use-remote-storage -minio-access-key "ROOTUSER" -minio-secret-key "CHANGEME123"
-    ```
+   ```bash
+   # Usage:
+   # sudo ./remote-firecracker-snapshots-poc -boot-from-snap \
+   #    -id "<VM ID>" -revision "<revision ID>" \
+   #    -snapshots-base-path "<path/to/snapshots/folder>" -use-remote-storage \
+   #    -minio-access-key "<access key>" -minio-secret-key "<secret key>" \
+   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>"
 
-   This will boot a VM from the specified snapshot. The VM will be started with the same state as when the snapshot was
-   taken. The VM will keep running after the snapshot is booted.
+   sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc \
+    -boot-from-snap -id "vm5" \
+    -revision "nginx-0" \
+    -snapshots-base-path "/users/ajesus/vhive/remote-firecracker-snapshots-poc/snaps" \
+    -use-remote-storage -minio-access-key "ROOTUSER" \
+    -minio-secret-key "CHANGEME123" \
+    -minio-endpoint "hp086.utah.cloudlab.us:9000" \
+    -minio-bucket "snapshots"
+   ```
+
+   This will restore the VM to the exact state it was in when the snapshot was taken.
 
 ---
 
 ## Program Workflow
 
-### Boot a VM
+### Booting a VM
 
 1. The program starts by configuring the network for the VM, following
    the [Network for Clones](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/network-for-clones.md)
@@ -245,36 +288,26 @@ sudo http-address-resolver
 
 With the VM running, you can send requests to the VM using curl.
 
-### Take a snapshot
+### Taking a Snapshot
 
 1. The program starts by pausing the VM using the `firecracker` API.
 2. Using the same API, the program creates a snapshot of the VM's state, generating two files:
-    1. **Guest memory file**: Contains the memory of the VM: `mem_file`
-    2. **MicroVM state file**: Contains the state of the VM: `snap_file`
-3. After this, we
-   use [nerdctl](https://github.com/containerd/nerdctl/blob/main/docs/command-reference.md#whale-nerdctl-commit) to
-   **[commit](https://docs.docker.com/reference/cli/docker/container/commit/) the container** running inside the VM,
-   creating a new image with the specified revision. This creates a new image with the container's changes, like
-   creating a snapshot of the container. And then push this image to the registry.
-    1. We create a third file, called `info_file` containing the container image name and the container snapshot commit
-       name.
-4. The VM is resumed.
+   1. **Guest memory file**: Contains the memory of the VM: `mem_file`
+   2. **MicroVM state file**: Contains the state of the VM: `snap_file`
+3. The VM is resumed.
 
 After the snapshot is taken, the VM and container will be resumed, and the program will keep running.
 
-In summary, this process generates three files inside the desired folder:
+In summary, this process generates two files inside the desired folder:
 
 1. `mem_file`: Contains the memory of the VM.
 2. `snap_file`: Contains the state of the VM.
-3. `info_file`: Contains the container image name and the container snapshot commit name.
 
-### Boot from a snapshot
+### Booting from a Snapshot
 
 1. Configure the network for the VM (same as when booting a fresh VM).
-2. Deserealize the `info_file` to get the container image name and the container snapshot commit name.
-3. Pull the container image from the registry using the container image name.
-4. Send a create VM request to `firecracker-containerd`, specifying the VM config, the `mem_file`, the `snap_file`, and
-   the container snapshot image.
+2. Check if the snapshot files are available in the specified folder. If not, download them from the remote storage (MinIO).
+3. Send a create VM request to `firecracker-containerd`, specifying the VM config, the `mem_file`, the `snap_file`.
 
 After this, the VM will be booted from the snapshot, and the container will be started with the same state as when the
 snapshot was taken.
