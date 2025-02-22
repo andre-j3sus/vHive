@@ -15,17 +15,14 @@ import (
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
 	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/nerdctl/pkg/imgutil/commit"
 	"github.com/containerd/stargz-snapshotter/fs/source"
 	fcclient "github.com/firecracker-microvm/firecracker-containerd/firecracker-control/client"
 	"github.com/firecracker-microvm/firecracker-containerd/proto"
 	"github.com/firecracker-microvm/firecracker-containerd/runtime/firecrackeroci"
-	"github.com/opencontainers/image-spec/identity"
 	"github.com/pkg/errors"
 	"github.com/vhive-serverless/remote-firecracker-snapshots-poc/snapshotting"
 	"github.com/vhive-serverless/vhive/networking"
 	"log"
-	"path/filepath"
 	"strings"
 )
 
@@ -77,11 +74,6 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEnd
 	orch.snapshotManager, err = snapshotting.NewSnapshotManager(snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket, useRemoteStorage)
 	if err != nil {
 		return nil, errors.Wrapf(err, "creating snapshot manager")
-	}
-
-	err = orch.snapshotManager.RecoverSnapshots(snapsBaseFolder)
-	if err != nil {
-		return nil, errors.Wrapf(err, "recovering snapshots")
 	}
 
 	// Connect to firecracker client
@@ -160,42 +152,6 @@ func (orch *Orchestrator) getContainerImage(vmID, imageName, dockerMetadataTempl
 	}
 
 	return &image, nil
-}
-
-func getImageKey(image containerd.Image, ctx context.Context) (string, error) {
-	diffIDs, err := image.RootFS(ctx)
-	if err != nil {
-		return "", err
-	}
-	return identity.ChainID(diffIDs).String(), nil
-}
-
-func (orch *Orchestrator) createCtrSnap(snapKey string, image containerd.Image) (*mount.Mount, error) {
-	// Get image key (image is parent of container)
-	parent, err := getImageKey(image, orch.ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	lease, err := orch.leaseManager.Create(orch.ctx, leases.WithID(snapKey))
-	if err != nil {
-		return nil, err
-	}
-	orch.leases[snapKey] = &lease
-	// Update current context to add lease
-	ctx := leases.WithLease(orch.ctx, lease.ID)
-
-	mounts, err := orch.snapshotService.Prepare(ctx, snapKey, parent)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(mounts) != 1 {
-		log.Panic("expected snapshot to only have one mount")
-	}
-
-	// Devmapper always only has a single mount /dev/mapper/fc-thinpool-snap-x
-	return &mounts[0], nil
 }
 
 func (orch *Orchestrator) createVM(vmID string) error {
@@ -283,61 +239,15 @@ func (orch *Orchestrator) startContainer(vmID, snapKey, imageName string, image 
 	return nil // TODO: pass vm IP (Natted one) to CRI?
 }
 
-// Commit changes applied by container on top of image layer
-func (orch *Orchestrator) commitCtrSnap(vmID, snapCommitName string) error {
-	vmInfo := orch.vms[vmID]
-
-	log.Println("Committing container snapshot")
-	_, err := commit.Commit(orch.ctx, orch.client, vmInfo.ctr, &commit.Opts{Pause: false, Ref: snapCommitName})
-	if err != nil {
-		return fmt.Errorf("committing container snapshot: %w", err)
-	}
-
-	log.Println("Retrieving container snapshot commit")
-	img, err := orch.client.GetImage(orch.ctx, snapCommitName)
-	if err != nil {
-		return fmt.Errorf("retrieving container snapshot commit: %w", err)
-	}
-
-	log.Println("Pushing container snapshot patch")
-	options := docker.ResolverOptions{
-		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
-		Client: http.DefaultClient,
-	}
-	err = orch.client.Push(orch.ctx, fmt.Sprintf("hp114.utah.cloudlab.us:5000/%s:latest", snapCommitName),
-		img.Target(), containerd.WithResolver(docker.NewResolver(options)))
-	if err != nil {
-		return fmt.Errorf("pushing container snapshot patch: %w", err)
-	}
-
-	return nil
-}
-
-// Apply changes on top of image layer
-func (orch *Orchestrator) pullCtrSnapCommit(snapCommitName string) (*containerd.Image, error) {
-	log.Println("Pulling container snapshot patch")
-	options := docker.ResolverOptions{
-		Hosts:  config.ConfigureHosts(orch.ctx, config.HostOptions{DefaultScheme: "http"}),
-		Client: http.DefaultClient,
-	}
-	img, err := orch.client.Pull(orch.ctx, fmt.Sprintf("hp114.utah.cloudlab.us:5000/%s:latest", snapCommitName),
-		containerd.WithPullUnpack, containerd.WithPullSnapshotter(snapshotter),
-		containerd.WithResolver(docker.NewResolver(options)))
-	if err != nil {
-		return nil, fmt.Errorf("pulling container snapshot patch: %w", err)
-	}
-	return &img, nil
-}
-
 func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
-	//vmInfo := orch.vms[vmID]
+	vmInfo := orch.vms[vmID]
 
 	log.Println("Pausing VM")
 	if _, err := orch.fcClient.PauseVM(orch.ctx, &proto.PauseVMRequest{VMID: vmID}); err != nil {
 		return fmt.Errorf("pausing VM: %w", err)
 	}
 
-	snap, err := orch.snapshotManager.RegisterSnap(revision)
+	snap, err := orch.snapshotManager.InitSnapshot(revision, vmInfo.imgName)
 	if err != nil {
 		return fmt.Errorf("adding snapshot to snapshot manager: %w", err)
 	}
@@ -346,32 +256,11 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	createSnapshotRequest := &proto.CreateSnapshotRequest{
 		VMID:         vmID,
 		MemFilePath:  snap.GetMemFilePath(),
-		SnapshotPath: snap.GetSnapFilePath(),
+		SnapshotPath: snap.GetSnapshotFilePath(),
 	}
 	if _, err := orch.fcClient.CreateSnapshot(orch.ctx, createSnapshotRequest); err != nil {
 		return fmt.Errorf("creating VM snapshot: %w", err)
 	}
-
-	//log.Println("Flushing container snapshot device")
-	//if err := flushSnapDev(vmInfo.containerSnapMount); err != nil {
-	//	return fmt.Errorf("flushing container snapshot device: %w", err)
-	//}
-	//
-	//log.Println("Suspending container snapshot device")
-	//if err := suspendSnapDev(vmInfo.containerSnapMount); err != nil {
-	//	return fmt.Errorf("suspending container snapshot device: %w", err)
-	//}
-	//
-	//log.Println("Resuming container snapshot device")
-	//if err := resumeSnapDev(vmInfo.containerSnapMount); err != nil {
-	//	return fmt.Errorf("resuming container snapshot device: %w", err)
-	//}
-
-	//log.Println("Committing container snapshot")
-	//err = orch.commitCtrSnap(vmID, snap.GetContainerSnapName())
-	//if err != nil {
-	//	return fmt.Errorf("committing container snapshot: %w", err)
-	//}
 
 	log.Println("Resuming VM")
 	if _, err := orch.fcClient.ResumeVM(orch.ctx, &proto.ResumeVMRequest{VMID: vmID}); err != nil {
@@ -384,11 +273,7 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	}
 
 	log.Println("Serializing snapshot information")
-	snapInfo := Snapshot{
-		Img:               orch.vms[vmID].imgName,
-		CtrSnapCommitName: snap.GetContainerSnapName(),
-	}
-	if err := serializeSnapInfo(snap.GetInfoFilePath(), snapInfo); err != nil {
+	if err := snap.SerializeSnapInfo(); err != nil {
 		return fmt.Errorf("serializing snapshot information: %w", err)
 	}
 
@@ -404,55 +289,23 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	return nil
 }
 
-func (orch *Orchestrator) restoreSnapInfo(vmID, snapshotKey, infoFile string) (*VMInfo, error) {
-	log.Println("Deserializing snapshot information")
-	snapInfo, err := deserializeSnapInfo(infoFile)
-	if err != nil {
-		return nil, fmt.Errorf("deserializing snapshot information: %w", err)
-	}
-
-	vmInfo := VMInfo{
-		imgName:           snapInfo.Img,
-		ctrSnapKey:        snapshotKey,
-		ctrSnapCommitName: snapInfo.CtrSnapCommitName,
-		snapBooted:        true,
-	}
-	orch.vms[vmID] = vmInfo
-	return &vmInfo, nil
-}
-
-func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
-	//snapKey := getSnapKey(vmID)
-
-	//log.Println("Restoring snapshot information")
-	//vmInfo, err := orch.restoreSnapInfo(vmID, snapKey, filepath.Join(orch.snapshotManager.BasePath, revision, "infofile"))
-	//if err != nil {
-	//	return fmt.Errorf("restoring snapshot information: %w", err)
-	//}
-
-	//log.Println("Pulling container snapshot commit")
-	//img, err := orch.pullCtrSnapCommit(vmInfo.ctrSnapCommitName)
-	//if err != nil {
-	//	return fmt.Errorf("pulling container snapshot commit: %w", err)
-	//}
-
-	//log.Println("Creating container snapshot")
-	//ctrSnapMount, err := orch.createCtrSnap(snapKey, *img)
-	//if err != nil {
-	//	return fmt.Errorf("creating container snapshot: %w", err)
-	//}
-	
-	if _, err := orch.snapshotManager.GetSnapshot(revision); err != nil {
+func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {	
+	if _, err := orch.snapshotManager.AcquireSnapshot(revision); err != nil {
 		if orch.useRemoteStorage {
 			log.Println("Downloading snapshot from remote storage")
 
-			err := orch.snapshotManager.DownloadSnapshot(revision)
+			_, err := orch.snapshotManager.DownloadSnapshot(revision)
 			if err != nil {
 				return fmt.Errorf("failed to download snapshot from remote storage: %w", err)
 			}
 		} else {
 			return fmt.Errorf("snapshot %s not found locally and remote storage is disabled", revision)
 		}
+	}
+
+	snap, err := orch.snapshotManager.AcquireSnapshot(revision)
+	if err != nil {
+		return fmt.Errorf("failed to acquire snapshot", err)
 	}
 
 	createVMRequest := &proto.CreateVMRequest{
@@ -475,13 +328,12 @@ func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
 		}},
 		NetNS:        orch.networkManager.GetConfig(vmID).GetNamespacePath(),
 		LoadSnapshot: true,
-		MemFilePath:  filepath.Join(orch.snapshotManager.BasePath, revision, "memfile"),
-		SnapshotPath: filepath.Join(orch.snapshotManager.BasePath, revision, "snapfile"),
-		//ContainerSnapshotPath: ctrSnapMount.Source,
+		MemFilePath:  snap.GetMemFilePath(),
+		SnapshotPath: snap.GetSnapshotFilePath(),
 	}
 
 	log.Println("Creating firecracker VM from snapshot")
-	_, err := orch.fcClient.CreateVM(orch.ctx, createVMRequest)
+	_, err = orch.fcClient.CreateVM(orch.ctx, createVMRequest)
 	if err != nil {
 		return fmt.Errorf("creating firecracker VM: %w", err)
 	}
