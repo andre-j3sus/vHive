@@ -47,7 +47,7 @@ type Orchestrator struct {
 	leaseManager    leases.Manager
 	leases          map[string]*leases.Lease
 	networkManager  *networking.NetworkManager
-	snapshotManager *snapshotting.SnapshotManager
+	snapshotManager *snapshotting.RemoteSnapshotManager
 
 	useRemoteStorage bool
 
@@ -57,7 +57,7 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator Initializes a new orchestrator
-func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket string, useRemoteStorage bool) (*Orchestrator, error) {
+func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket, redisAddr string, useRemoteStorage bool) (*Orchestrator, error) {
 	var err error
 
 	orch := new(Orchestrator)
@@ -71,7 +71,7 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEnd
 	}
 
 	orch.useRemoteStorage = useRemoteStorage
-	orch.snapshotManager, err = snapshotting.NewSnapshotManager(snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket, useRemoteStorage)
+	orch.snapshotManager, err = snapshotting.NewRemoteSnapshotManager(snapsBaseFolder, minioEndpoint, accessKey, secretKey, bucket, redisAddr, useRemoteStorage)
 	if err != nil {
 		return nil, errors.Wrapf(err, "creating snapshot manager")
 	}
@@ -274,6 +274,11 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 
 	log.Println("Serializing snapshot information")
 	if err := snap.SerializeSnapInfo(); err != nil {
+		return fmt.Errorf("serializing snapshot information: %w", err)
+	}
+
+	log.Println("Committing snapshot")
+	if err := orch.snapshotManager.CommitSnapshot(revision); err != nil {
 		return fmt.Errorf("serializing snapshot information: %w", err)
 	}
 
