@@ -45,6 +45,7 @@ func main() {
 	var accessKey = flag.String("minio-access-key", "minioadmin", "MinIO access key")
 	var secretKey = flag.String("minio-secret-key", "minioadmin", "MinIO secret key")
 	var bucket = flag.String("minio-bucket", "snapshots", "MinIO bucket name")
+	var redisAddr = flag.String("redis-addr", "localhost:6379", "MinIO bucket name")
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	flag.Parse()
@@ -65,16 +66,16 @@ func main() {
 		log.Fatal("Incorrect usage. 'revision' needs to be specified")
 	}
 
-	if err := taskWorkflow(*vmID, *image, *revision, *snapsBasePath, *keepalive, *makeSnap, *bootFromSnap, *useRemoteStorage, *minioEndpoint, *accessKey, *secretKey, *bucket); err != nil {
+	if err := taskWorkflow(*vmID, *image, *revision, *snapsBasePath, *keepalive, *makeSnap, *bootFromSnap, *useRemoteStorage, *minioEndpoint, *accessKey, *secretKey, *bucket, *redisAddr); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, makeSnap, bootFromSnap, useRemoteStorage bool, minioEndpoint, accessKey, secretKey, bucket string) error {
+func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, makeSnap, bootFromSnap, useRemoteStorage bool, minioEndpoint, accessKey, secretKey, bucket, redisAddr string) error {
 	log.Println("Creating orchestrator")
 	// The example http-address-resolver assumes that the containerd namespace
 	// is the sames as the VM ID.
-	orch, err := NewOrchestrator(snapshotter, vmID, snapsBasePath, minioEndpoint, accessKey, secretKey, bucket, useRemoteStorage)
+	orch, err := NewOrchestrator(snapshotter, vmID, snapsBasePath, minioEndpoint, accessKey, secretKey, bucket, redisAddr, useRemoteStorage)
 	if err != nil {
 		return fmt.Errorf("creating orchestrator: %w", err)
 	}

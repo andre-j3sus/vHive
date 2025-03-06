@@ -8,18 +8,61 @@ This guide explains how to create and boot firecracker-containerd VMs from snaps
 
 - [Remote Firecracker Snapshots PoC](#remote-firecracker-snapshots-poc)
   - [Table of Contents](#table-of-contents)
+  - [How It Works](#how-it-works)
+    - [Booting a VM](#booting-a-vm)
+    - [Taking a Snapshot](#taking-a-snapshot)
+    - [Booting from a Snapshot](#booting-from-a-snapshot)
   - [Setup](#setup)
     - [Setting Up a Registry](#setting-up-a-registry)
     - [Setting Up Stargz](#setting-up-stargz)
       - [eStargz Images](#estargz-images)
-    - [Setting Up MinIO](#setting-up-minio)
+    - [Setting Up MinIO \[Optional\]](#setting-up-minio-optional)
   - [Usage](#usage)
     - [Booting a VM and Taking a Snapshot](#booting-a-vm-and-taking-a-snapshot)
     - [Booting a VM from a Snapshot](#booting-a-vm-from-a-snapshot)
-  - [Program Workflow](#program-workflow)
-    - [Booting a VM](#booting-a-vm)
-    - [Taking a Snapshot](#taking-a-snapshot)
-    - [Booting from a Snapshot](#booting-from-a-snapshot)
+
+## How It Works
+
+### Booting a VM
+
+1. The program starts by configuring the network for the VM, following
+   the [Network for Clones](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/network-for-clones.md)
+   guide from the Firecracker repository. This is the same process that vHive uses, and it uses the same Go module.
+2. After the network is configured, the program creates a new VM using the `firecracker` API. The VM is created with the
+   specified image and revision.
+3. With the VM running, the program starts a container inside the VM using `firecracker-containerd` with the specified
+   image.
+
+With the VM running, you can send requests to the VM using curl.
+
+### Taking a Snapshot
+
+1. The program starts by pausing the VM using the `firecracker` API.
+2. Using the same API, the program creates a snapshot of the VM's state, generating two files:
+   1. **Guest memory file**: Contains the memory of the VM: `mem_file`
+   2. **MicroVM state file**: Contains the state of the VM: `snap_file`
+3. These files are stored in the specified folder. If the `-use-remote-storage` flag is set, the files are also uploaded
+   to MinIO. The memory file is chunked and uploaded to MinIO, to optimize storage - **deduplication** - while the other files are uploaded as is. The deduplication process occurs in each node, and works as follows:
+   1. The program chunks the memory file and calculates the SHA256 hash of each chunk.
+   2. The program checks if the chunk already exists in MinIO by querying the Redis server - the goal of the Redis server is to store the hashes of the chunks that are already in MinIO to avoid uploading them again.
+   3. If the chunk is not found in MinIO, the program uploads it to MinIO and stores the hash in the Redis server.
+4. The VM is resumed.
+
+After the snapshot is taken, the VM and container will be resumed, and the program will keep running.
+
+In summary, this process generates two files inside the desired folder:
+
+1. `mem_file`: Contains the memory of the VM.
+2. `snap_file`: Contains the state of the VM.
+
+### Booting from a Snapshot
+
+1. Configure the network for the VM (same as when booting a fresh VM).
+2. Check if the snapshot files are available in the specified folder. If not, download them from the remote storage (MinIO).
+3. Send a create VM request to `firecracker-containerd`, specifying the VM config, the `mem_file`, the `snap_file`.
+
+After this, the VM will be booted from the snapshot, and the container will be started with the same state as when the
+snapshot was taken.
 
 ## Setup
 
@@ -55,6 +98,12 @@ Follow these steps to set up the environment for using remote firecracker-contai
    go build
    ```
 
+6. Start a local registry, MinIO server, and a Redis server using docker-compose:
+
+   ```bash
+   docker-compose up -d
+   ```
+
 ### Setting Up a Registry
 
 This program retrieves container images from a registry. You can use a public registry such as Docker Hub or GitHub Container Registry, or set up your own using the [`registry:2`](https://hub.docker.com/_/registry) image.
@@ -67,7 +116,7 @@ To run a local registry, you need containerd and a container runtime like Docker
    sudo sh ./scripts/install_nerdctl.sh
    ```
 
-2. Start the registry using either docker or nerdctl:
+2. Start the registry using either docker or nerdctl. **This is not needed if you started the registry using docker-compose.**
 
    ```bash
    docker run -d --network host --name registry registry:2
@@ -133,11 +182,11 @@ Here are some images that have already been converted to eStargz:
 
 - [fibonacci-python](https://hub.docker.com/r/devandrejesus/fibonacci-python)
 
-### Setting Up MinIO
+### Setting Up MinIO [Optional]
 
 [MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. It can be used to store snapshots in a remote location.
 
-1. Follow the [official guide](https://min.io/docs/minio/container/index.html) to run a MinIO server inside a Docker container:
+1. Follow the [official guide](https://min.io/docs/minio/container/index.html) to run a MinIO server inside a Docker container. **This is not needed if you started MinIO using docker-compose.**
 
    ```bash
    mkdir -p ${HOME}/minio/data
@@ -163,11 +212,13 @@ Here are some images that have already been converted to eStargz:
    mc alias set myminio http://localhost:9000 ROOTUSER CHANGEME123
    ```
 
-4. Create a bucket. This will create a bucket called `snapshots` in the MinIO server:
+4. [Optional] Create a bucket. This will create a bucket called `snapshots` in the MinIO server:
 
    ```bash
    mc mb myminio/snapshots
    ```
+
+   This is optional because the program will create the bucket if it does not exist.
 
 ---
 
@@ -197,7 +248,8 @@ sudo http-address-resolver
    #    -id "<VM ID>" -image "<URI>" -revision "<revision ID>" \
    #    -snapshots-base-path "<path/to/snapshots/folder>" -use-remote-storage \
    #    -minio-access-key "<access key>" -minio-secret-key "<secret key>" \
-   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>"
+   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>" \^
+   #    -redis-addr "<redis address>"
 
    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc \
     -make-snap -id "vm1" \
@@ -207,7 +259,8 @@ sudo http-address-resolver
     -use-remote-storage -minio-access-key "ROOTUSER" \
     -minio-secret-key "CHANGEME123" \
     -minio-endpoint "localhost:9000" \
-    -minio-bucket "snapshots"
+    -minio-bucket "snapshots" \
+    -redis-addr "localhost:6379"
    ```
 
    This will:
@@ -258,7 +311,8 @@ You can either use the `rsync` command to copy the snapshot files from one machi
    #    -id "<VM ID>" -revision "<revision ID>" \
    #    -snapshots-base-path "<path/to/snapshots/folder>" -use-remote-storage \
    #    -minio-access-key "<access key>" -minio-secret-key "<secret key>" \
-   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>"
+   #    -minio-endpoint "<minio endpoint>" -minio-bucket "<minio bucket>" \
+   #    -redis-addr "<redis address>"
 
    sudo ./remote-firecracker-snapshots-poc/remote-firecracker-snapshots-poc \
     -boot-from-snap -id "vm5" \
@@ -267,47 +321,8 @@ You can either use the `rsync` command to copy the snapshot files from one machi
     -use-remote-storage -minio-access-key "ROOTUSER" \
     -minio-secret-key "CHANGEME123" \
     -minio-endpoint "hp086.utah.cloudlab.us:9000" \
-    -minio-bucket "snapshots"
+    -minio-bucket "snapshots" \
+    -redis-addr "localhost:6379"
    ```
 
    This will restore the VM to the exact state it was in when the snapshot was taken.
-
----
-
-## Program Workflow
-
-### Booting a VM
-
-1. The program starts by configuring the network for the VM, following
-   the [Network for Clones](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/network-for-clones.md)
-   guide from the Firecracker repository. This is the same process that vHive uses, and it uses the same Go module.
-2. After the network is configured, the program creates a new VM using the `firecracker` API. The VM is created with the
-   specified image and revision.
-3. With the VM running, the program starts a container inside the VM using `firecracker-containerd` with the specified
-   image.
-
-With the VM running, you can send requests to the VM using curl.
-
-### Taking a Snapshot
-
-1. The program starts by pausing the VM using the `firecracker` API.
-2. Using the same API, the program creates a snapshot of the VM's state, generating two files:
-   1. **Guest memory file**: Contains the memory of the VM: `mem_file`
-   2. **MicroVM state file**: Contains the state of the VM: `snap_file`
-3. The VM is resumed.
-
-After the snapshot is taken, the VM and container will be resumed, and the program will keep running.
-
-In summary, this process generates two files inside the desired folder:
-
-1. `mem_file`: Contains the memory of the VM.
-2. `snap_file`: Contains the state of the VM.
-
-### Booting from a Snapshot
-
-1. Configure the network for the VM (same as when booting a fresh VM).
-2. Check if the snapshot files are available in the specified folder. If not, download them from the remote storage (MinIO).
-3. Send a create VM request to `firecracker-containerd`, specifying the VM config, the `mem_file`, the `snap_file`.
-
-After this, the VM will be booted from the snapshot, and the container will be started with the same state as when the
-snapshot was taken.
