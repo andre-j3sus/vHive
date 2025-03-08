@@ -16,10 +16,13 @@ This guide explains how to create and boot firecracker-containerd VMs from snaps
     - [Setting Up a Registry](#setting-up-a-registry)
     - [Setting Up Stargz](#setting-up-stargz)
       - [eStargz Images](#estargz-images)
-    - [Setting Up MinIO \[Optional\]](#setting-up-minio-optional)
+    - [Setting Up MinIO](#setting-up-minio)
   - [Usage](#usage)
     - [Booting a VM and Taking a Snapshot](#booting-a-vm-and-taking-a-snapshot)
     - [Booting a VM from a Snapshot](#booting-a-vm-from-a-snapshot)
+  - [Limitations and Findings](#limitations-and-findings)
+  - [To Do](#to-do)
+  - [Future Work](#future-work)
 
 ## How It Works
 
@@ -39,26 +42,26 @@ With the VM running, you can send requests to the VM using curl.
 
 1. The program starts by pausing the VM using the `firecracker` API.
 2. Using the same API, the program creates a snapshot of the VM's state, generating two files:
+
    1. **Guest memory file**: Contains the memory of the VM: `mem_file`
    2. **MicroVM state file**: Contains the state of the VM: `snap_file`
-3. These files are stored in the specified folder. If the `-use-remote-storage` flag is set, the files are also uploaded
-   to MinIO. The memory file is chunked and uploaded to MinIO, to optimize storage - **deduplication** - while the other files are uploaded as is. The deduplication process occurs in each node, and works as follows:
-   1. The program chunks the memory file and calculates the SHA256 hash of each chunk.
-   2. The program checks if the chunk already exists in MinIO by querying the Redis server - the goal of the Redis server is to store the hashes of the chunks that are already in MinIO to avoid uploading them again.
-   3. If the chunk is not found in MinIO, the program uploads it to MinIO and stores the hash in the Redis server.
-4. The VM is resumed.
 
-After the snapshot is taken, the VM and container will be resumed, and the program will keep running.
+   These files are stored in the specified folder.
 
-In summary, this process generates two files inside the desired folder:
+3. `fallocate --dig-holes` is used to optimize the memory file by removing zeroed pages.
+4. If the `-use-remote-storage` flag is set, the files are also stored in a remote storage, allowing them to be retrieved from another node. This works as follows:
 
-1. `mem_file`: Contains the memory of the VM.
-2. `snap_file`: Contains the state of the VM.
+   1. The program uploads the snapshot files to MinIO, a high-performance object storage server that is API-compatible with Amazon S3. To optimize storage, a **deduplication** mechanism is applied to the memory file, while the other files are uploaded as is. This deduplication process occurs in each node, and works as follows:
+      1. The program chunks the memory file and calculates the SHA256 hash of each chunk.
+      2. The program checks if the chunk already exists in MinIO by querying the Redis server. The goal of the Redis server is to store the hashes of the chunks that are already in MinIO to avoid uploading them again.
+      3. If the chunk is not found in MinIO, the program uploads it to MinIO and stores the hash in the Redis server.
+
+5. The VM is resumed.
 
 ### Booting from a Snapshot
 
 1. Configure the network for the VM (same as when booting a fresh VM).
-2. Check if the snapshot files are available in the specified folder. If not, download them from the remote storage (MinIO).
+2. Check if the snapshot files are available in the specified folder. If not, download them from the remote storage (MinIO). This also involves reconstructing the memory file by downloading the chunks from MinIO and concatenating them.
 3. Send a create VM request to `firecracker-containerd`, specifying the VM config, the `mem_file`, the `snap_file`.
 
 After this, the VM will be booted from the snapshot, and the container will be started with the same state as when the
@@ -98,10 +101,10 @@ Follow these steps to set up the environment for using remote firecracker-contai
    go build
    ```
 
-6. Start a local registry, MinIO server, and a Redis server using docker-compose:
+6. Start a local registry, MinIO server, and a Redis server using docker compose:
 
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
 ### Setting Up a Registry
@@ -116,7 +119,7 @@ To run a local registry, you need containerd and a container runtime like Docker
    sudo sh ./scripts/install_nerdctl.sh
    ```
 
-2. Start the registry using either docker or nerdctl. **This is not needed if you started the registry using docker-compose.**
+2. Start the registry using either docker or nerdctl. **This is not needed if you started the registry using docker compose.**
 
    ```bash
    docker run -d --network host --name registry registry:2
@@ -173,20 +176,28 @@ The stargz snapshotter uses a new image format called [eStargz](https://github.c
 You can try to use their [pre-converted images](https://github.com/containerd/stargz-snapshotter/blob/main/docs/pre-converted-images.md), or [build your own using the BuildKit](https://github.com/containerd/stargz-snapshotter/tree/main?tab=readme-ov-file#building-estargz-images-using-buildkit). For example:
 
 ```bash
-docker buildx build --tag devandrejesus/fibonacci-python:esgz --target fibonacciPython -f .\Dockerfile -o type=registry,oci-mediatypes=true,compression=estargz,force-compression=true ..\..\
+# docker buildx build --tag <image-name>:<tag> -f <Dockerfile> -o type=registry,oci-mediatypes=true,compression=estargz,force-compression=true <context>
+docker buildx build --tag devandrejesus/fibonacci-python:esgz -f .\Dockerfile -o type=registry,oci-mediatypes=true,compression=estargz,force-compression=true .
 ```
 
 Alternatively, you can use [`ctr-remote`](https://github.com/containerd/stargz-snapshotter/tree/main?tab=readme-ov-file#creating-estargz-images-using-ctr-remote) to convert an existing image into eStargz while optimizing it for specific workloads.
 
 Here are some images that have already been converted to eStargz:
 
-- [fibonacci-python](https://hub.docker.com/r/devandrejesus/fibonacci-python)
+- [nginx](https://hub.docker.com/r/curiousgeorgiy/nginx)
+- [hello-world-python](https://hub.docker.com/r/devandrejesus/hello-world-python)
+- [matrix-multiplier-python](https://hub.docker.com/r/devandrejesus/matrix-multiplier-python)
+- [word-counter-go](https://hub.docker.com/r/devandrejesus/word-counter-go)
 
-### Setting Up MinIO [Optional]
+More images can be found in [this repository](https://github.com/andre-j3sus/faas-examples).
+
+### Setting Up MinIO
+
+**This is not needed if you started MinIO using docker compose.**
 
 [MinIO](https://min.io/) is a high-performance object storage server that is API-compatible with Amazon S3. It can be used to store snapshots in a remote location.
 
-1. Follow the [official guide](https://min.io/docs/minio/container/index.html) to run a MinIO server inside a Docker container. **This is not needed if you started MinIO using docker-compose.**
+1. Follow the [official guide](https://min.io/docs/minio/container/index.html) to run a MinIO server inside a Docker container.
 
    ```bash
    mkdir -p ${HOME}/minio/data
@@ -322,7 +333,52 @@ You can either use the `rsync` command to copy the snapshot files from one machi
     -minio-secret-key "CHANGEME123" \
     -minio-endpoint "hp086.utah.cloudlab.us:9000" \
     -minio-bucket "snapshots" \
-    -redis-addr "localhost:6379"
+    -redis-addr "hp086.utah.cloudlab.us:6379"
    ```
 
    This will restore the VM to the exact state it was in when the snapshot was taken.
+
+---
+
+## Limitations and Findings
+
+During the snapshot restoration process, four MMIO devices are required to restore the VM to its previous state. These devices are:
+
+1. **ConnectedBlockState**: I'm not sure what this device is used for. It is connected to the `ctrstub0` file, located at `/var/lib/firecracker-containerd/shim-base/vmX#vmX/ctrstub0`, where `vmX` is the VM ID.
+2. **ConnectedBlockState**: This device is used to restore the root drive of the VM. The device is connected to the `rootfs-stargz.img` file.
+3. **ConnectedNetState**: This device is used to restore the network configuration of the VM. The device is connected to the `tap0` interface.
+4. **ConnectedVsockState**: This device is used to restore the vsock configuration of the VM. The device is connected to the `firecracker.vsock` file.
+
+Here's a snippet of the logs showing the restoration of the MMIO devices (these logs are not native to Firecracker, but were added by me to debug the snapshot restoration process):
+
+```bash
+DEBU[2025-02-20T15:55:26.157311107-07:00] Restoring MMIO devices... jailer=noop runtime=aws.firecracker vmID=vm7 vmm_stream=stdout
+DEBU[2025-02-20T15:55:26.157367624-07:00] Device 0: ConnectedBlockState { device_id: "MN2HE43UOVRDA", device_state: BlockState { id: "MN2HE43UOVRDA", partuuid: None, cache_type: Unsafe, root_device: false, disk_path: "/var/lib/firecracker-containerd/shim-base/vm1#vm1/ctrstub0", virtio_state: VirtioDeviceState { device_type: 2, avail_features: 4831838208, acked_features: 4831838208, queues: [QueueState { max_size: 256, size: 256, ready: true, desc_table: 60833792, avail_ring: 60837888, used_ring: 60841984, next_avail: 5, next_used: 5, num_added: 0 }], interrupt_status: 0, activated: true }, rate_limiter_state: RateLimiterState { ops: None, bandwidth: None }, file_engine_type: Sync }, transport_state: MmioTransportState { features_select: 0, acked_features_select: 0, queue_select: 0, device_status: 15, config_generation: 0 }, mmio_slot: MMIODeviceInfo { addr: 3489665024, len: 4096, irqs: [6] } } jailer=noop runtime=aws.firecracker vmID=vm7 vmm_stream=stdout
+DEBU[2025-02-20T15:55:26.157821604-07:00] Device 1: ConnectedBlockState { device_id: "root_drive", device_state: BlockState { id: "root_drive", partuuid: None, cache_type: Unsafe, root_device: true, disk_path: "/var/lib/firecracker-containerd/runtime/rootfs-stargz.img", virtio_state: VirtioDeviceState { device_type: 2, avail_features: 4831838240, acked_features: 4831838240, queues: [QueueState { max_size: 256, size: 256, ready: true, desc_table: 63438848, avail_ring: 63442944, used_ring: 63447040, next_avail: 11404, next_used: 11404, num_added: 0 }], interrupt_status: 0, activated: true }, rate_limiter_state: RateLimiterState { ops: None, bandwidth: None }, file_engine_type: Sync }, transport_state: MmioTransportState { features_select: 0, acked_features_select: 0, queue_select: 0, device_status: 15, config_generation: 0 }, mmio_slot: MMIODeviceInfo { addr: 3489660928, len: 4096, irqs: [5] } } jailer=noop runtime=aws.firecracker vmID=vm7 vmm_stream=stdout
+DEBU[2025-02-20T15:55:26.158258785-07:00] Device 2: ConnectedNetState { device_id: "1", device_state: NetState { id: "1", tap_if_name: "tap0", rx_rate_limiter_state: RateLimiterState { ops: None, bandwidth: None }, tx_rate_limiter_state: RateLimiterState { ops: None, bandwidth: None }, mmds_ns: Some(MmdsNetworkStackState { mac_addr: [6, 1, 35, 69, 103, 1], ipv4_addr: 2852039166, tcp_port: 80, max_connections: 30, max_pending_resets: 100 }), config_space: NetConfigSpaceState { guest_mac: [170, 252, 0, 0, 0, 1] }, virtio_state: VirtioDeviceState { device_type: 1, avail_features: 4294986915, acked_features: 4294986915, queues: [QueueState { max_size: 256, size: 256, ready: true, desc_table: 62783488, avail_ring: 62787584, used_ring: 62791680, next_avail: 184, next_used: 184, num_added: 184 }, QueueState { max_size: 256, size: 256, ready: true, desc_table: 62799872, avail_ring: 62803968, used_ring: 62808064, next_avail: 144, next_used: 144, num_added: 144 }], interrupt_status: 0, activated: true } }, transport_state: MmioTransportState { features_select: 0, acked_features_select: 0, queue_select: 1, device_status: 15, config_generation: 0 }, mmio_slot: MMIODeviceInfo { addr: 3489669120, len: 4096, irqs: [7] } } jailer=noop runtime=aws.firecracker vmID=vm7 vmm_stream=stdout
+DEBU[2025-02-20T15:55:26.158327191-07:00] Device 3: ConnectedVsockState { device_id: "vsock", device_state: VsockState { backend: Uds(VsockUdsState { path: "firecracker.vsock" }), frontend: VsockFrontendState { cid: 0, virtio_state: VirtioDeviceState { device_type: 19, avail_features: 38654705664, acked_features: 4294967296, queues: [QueueState { max_size: 256, size: 256, ready: true, desc_table: 62062592, avail_ring: 62066688, used_ring: 62070784, next_avail: 53, next_used: 53, num_added: 53 }, QueueState { max_size: 256, size: 256, ready: true, desc_table: 62078976, avail_ring: 62083072, used_ring: 62087168, next_avail: 51, next_used: 51, num_added: 51 }, QueueState { max_size: 256, size: 256, ready: true, desc_table: 60850176, avail_ring: 60854272, used_ring: 60858368, next_avail: 0, next_used: 0, num_added: 0 }], interrupt_status: 0, activated: true } } }, transport_state: MmioTransportState { features_select: 0, acked_features_select: 0, queue_select: 2, device_status: 15, config_generation: 0 }, mmio_slot: MMIODeviceInfo { addr: 3489673216, len: 4096, irqs: [8] } } jailer=noop runtime=aws.firecracker vmID=vm7 vmm_stream=stdout
+DEBU[2025-02-20T15:55:26.163580856-07:00] snapshot loaded successfully runtime=aws.firecracker
+```
+
+The current limitation is that I'm not sure what the `ConnectedBlockState` device is used for. The file only contains a single string which is the device ID (e.g. `MN2HE43UOVRDA`). Also, to restore a remote snapshot, you need to move this file to the target machine manually.
+
+---
+
+## To Do
+
+- [ ] Test PoC with other images. Use the vHive [examples](../function-images/).
+- [ ] Test compression mechanisms for the memory file.
+- [ ] Investigate what is the MMIO device needed to restore the VM from a snapshot. More information in [Current Limitations](#current-limitations).
+- [ ] Investigate if there are better deduplication mechanisms for the memory file. Currently we use a simple chunk and hash approach.
+- [ ] Fix bug with demux-snapshotter: when the VM is stopped, the demux-snapshotter crashes.
+- [ ] Try to run the PoC in Ubuntu 22.04: I tried, but I got a network error with the vsock device. I need to investigate this further.
+
+---
+
+## Future Work
+
+There are several optimizations that can be implemented to improve the performance of the system:
+
+- **Pre-fetching of snapshots**. This would require a mechanism to predict the function invocation patterns and pre-fetch the snapshots that are likely to be used. Serverless in the Wild and ORION use some prediction mechanisms that could be adapted to this system.
+- **Redirect requests to nodes with the snapshots**. This could be done by using a load balancer that is aware of the snapshots' locations.
+- **Lazy loading of snapshots**. Instead of fetching the entire snapshot, only load the necessary parts of the snapshot. I'm not sure if this is possible to integrate with Firecracker, but it could be an interesting research direction.
