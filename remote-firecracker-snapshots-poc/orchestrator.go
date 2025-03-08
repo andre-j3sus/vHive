@@ -65,7 +65,7 @@ func NewOrchestrator(snapshotter, containerdNamespace, snapsBaseFolder, minioEnd
 	orch.vms = make(map[string]VMInfo)
 	orch.snapshotter = snapshotter
 	orch.ctx = namespaces.WithNamespace(context.Background(), containerdNamespace)
-	orch.networkManager, err = networking.NewNetworkManager("", 10)
+	orch.networkManager, err = networking.NewNetworkManager("", 10, "172.17", "172.18")
 	if err != nil {
 		return nil, errors.Wrapf(err, "creating network manager")
 	}
