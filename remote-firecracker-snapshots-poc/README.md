@@ -360,13 +360,13 @@ DEBU[2025-02-20T15:55:26.158327191-07:00] Device 3: ConnectedVsockState { device
 DEBU[2025-02-20T15:55:26.163580856-07:00] snapshot loaded successfully runtime=aws.firecracker
 ```
 
-The current limitation is that I'm not sure what the `ConnectedBlockState` device is used for. The file only contains a single string which is the device ID (e.g. `MN2HE43UOVRDA`). Also, to restore a remote snapshot, you need to move this file to the target machine manually.
+The current limitation is that I'm not sure what the `ConnectedBlockState` device is used for. The file only contains a single string which is the device ID (e.g. `MN2HE43UOVRDA`). Also, to restore a remote snapshot, you need to move this file to the target machine manually. It seems that the file always has the same content, independently of the container image. I still need to try images that change the disk state (create files), so see if it influences the content of the file.
 
 ---
 
 ## To Do
 
-- [ ] Test PoC with other images. Use the vHive [examples](../function-images/).
+- [X] Test PoC with [other images](https://github.com/andre-j3sus/faas-examples/).
 - [ ] Test compression mechanisms for the memory file.
 - [ ] Investigate what is the MMIO device needed to restore the VM from a snapshot. More information in [Current Limitations](#current-limitations).
 - [ ] Investigate if there are better deduplication mechanisms for the memory file. Currently we use a simple chunk and hash approach.

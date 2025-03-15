@@ -25,7 +25,6 @@ package snapshotting
 import (
 	"fmt"
 	"github.com/pkg/errors"
-	"os"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -48,8 +47,8 @@ func NewSnapshotManager(baseFolder string) *SnapshotManager {
 	manager.baseFolder = baseFolder
 
 	// Clean & init basefolder
-	_ = os.RemoveAll(manager.baseFolder)
-	_ = os.MkdirAll(manager.baseFolder, os.ModePerm)
+	//_ = os.RemoveAll(manager.baseFolder)
+	//_ = os.MkdirAll(manager.baseFolder, os.ModePerm)
 
 	return manager
 }

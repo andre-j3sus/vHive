@@ -42,8 +42,8 @@ func main() {
 	// MinIO-related flags for remote snapshot storage 
 	var useRemoteStorage = flag.Bool("use-remote-storage", false, "store snapshots remotely")
 	var minioEndpoint = flag.String("minio-endpoint", "localhost:9000", "MinIO server endpoint")
-	var accessKey = flag.String("minio-access-key", "minioadmin", "MinIO access key")
-	var secretKey = flag.String("minio-secret-key", "minioadmin", "MinIO secret key")
+	var accessKey = flag.String("minio-access-key", "ROOTUSER", "MinIO access key")
+	var secretKey = flag.String("minio-secret-key", "CHANGEME123", "MinIO secret key")
 	var bucket = flag.String("minio-bucket", "snapshots", "MinIO bucket name")
 	var redisAddr = flag.String("redis-addr", "localhost:6379", "MinIO bucket name")
 
