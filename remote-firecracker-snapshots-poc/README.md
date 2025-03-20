@@ -143,6 +143,12 @@ To run a local registry, you need containerd and a container runtime like Docker
    sudo nerdctl push localhost:5000/curiousgeorgiy/nginx:1.17-alpine-esgz
    ```
 
+   You can run the following script that pulls a set of example images from Docker Hub and pushes them to the registry:
+
+   ```bash
+   ./scripts/mirror_images.sh
+   ```
+
 ### Setting Up Stargz
 
 1. Build the rootfs with the stargz snapshotter. Follow the steps in [Getting started with remote snapshotters in firecracker-containerd](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md):
@@ -360,18 +366,19 @@ DEBU[2025-02-20T15:55:26.158327191-07:00] Device 3: ConnectedVsockState { device
 DEBU[2025-02-20T15:55:26.163580856-07:00] snapshot loaded successfully runtime=aws.firecracker
 ```
 
-The current limitation is that I'm not sure what the `ConnectedBlockState` device is used for. The file only contains a single string which is the device ID (e.g. `MN2HE43UOVRDA`). Also, to restore a remote snapshot, you need to move this file to the target machine manually. It seems that the file always has the same content, independently of the container image. I still need to try images that change the disk state (create files), so see if it influences the content of the file.
+The current limitation is that I'm not sure what the `ConnectedBlockState` device is used for. The file only contains a single string which is the device ID (e.g. `MN2HE43UOVRDA`). Also, to restore a remote snapshot, you need to move this file to the target machine manually. It seems that the file always has the same content, independently of the container image.
+I also tried to change the disk state of the VM by creating some files, but the `ConnectedBlockState` file remained the same.
 
 ---
 
 ## To Do
 
-- [X] Test PoC with [other images](https://github.com/andre-j3sus/faas-examples/).
+- [x] Test PoC with [other images](https://github.com/andre-j3sus/faas-examples/).
 - [ ] Test compression mechanisms for the memory file.
 - [ ] Investigate what is the MMIO device needed to restore the VM from a snapshot. More information in [Current Limitations](#current-limitations).
 - [ ] Investigate if there are better deduplication mechanisms for the memory file. Currently we use a simple chunk and hash approach.
 - [ ] Fix bug with demux-snapshotter: when the VM is stopped, the demux-snapshotter crashes.
-- [ ] Try to run the PoC in Ubuntu 22.04: I tried, but I got a network error with the vsock device. I need to investigate this further.
+- [ ] Try to run the PoC in Ubuntu 24: I tried, but I got a network error with the vsock device. I need to investigate this further.
 
 ---
 
