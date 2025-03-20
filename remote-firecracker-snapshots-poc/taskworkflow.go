@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"sync"
+	"bufio"
 
 	"github.com/containerd/containerd/reference"
 )
@@ -29,6 +31,8 @@ const (
 			}
 		}`
 )
+
+var once sync.Once // Ensures tearDownVM is only called once
 
 func main() {
 	var vmID = flag.String("id", "", "virtual machine identifier")
@@ -91,15 +95,6 @@ func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, ma
 		if err != nil {
 			return fmt.Errorf("bootstrapping VM: %w", err)
 		}
-
-		if makeSnap {
-			log.Println("Creating VM snapshot")
-			time.Sleep(3 * time.Second)
-			err = orch.createSnapshot(vmID, revision)
-			if err != nil {
-				return fmt.Errorf("creating VM snapshot: %w", err)
-			}
-		}
 	} else {
 		log.Println("Booting VM from snapshot")
 		err = bootVMFromSnapshot(orch, vmID, revision)
@@ -111,12 +106,29 @@ func taskWorkflow(vmID, image, revision, snapsBasePath string, keepAlive int, ma
 	time.Sleep(3 * time.Second)
 
 	SetupCloseHandler(orch, vmID)
+
+	fmt.Print("Press Enter to continue...")
+	reader := bufio.NewReader(os.Stdin)
+	_, _ = reader.ReadString('\n') // Waits for Enter key press
+
+	if makeSnap {
+		log.Println("Creating VM snapshot")
+		time.Sleep(3 * time.Second)
+		err = orch.createSnapshot(vmID, revision)
+		if err != nil {
+			return fmt.Errorf("creating VM snapshot: %w", err)
+		}
+		log.Println("Snapshot created")
+	}
+
 	time.Sleep(time.Duration(keepAlive) * time.Second)
 	log.Println("Tearing down VM")
-	err = tearDownVM(orch, vmID)
-	if err != nil {
-		return fmt.Errorf("tearing down VM: %w", err)
-	}
+	once.Do(func() { // Ensures tearDownVM is only executed once
+		if err := tearDownVM(orch, vmID); err != nil {
+			log.Fatalf("Error tearing down VM: %v", err)
+		}
+	})
+	log.Println("VM successfully shut down")
 
 	return nil
 }
@@ -192,11 +204,12 @@ func SetupCloseHandler(orch *Orchestrator, vmID string) {
 	go func() {
 		<-c
 		fmt.Println("\r- Ctrl+C pressed in Terminal")
-		err := tearDownVM(orch, vmID)
-		if err != nil {
-			log.Printf("err: %v\n", err)
-			os.Exit(1)
-		}
+		once.Do(func() {
+			if err := tearDownVM(orch, vmID); err != nil {
+				log.Printf("Error tearing down VM: %v", err)
+				os.Exit(1)
+			}
+		})
 		os.Exit(0)
 	}()
 }
