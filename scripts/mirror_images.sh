@@ -13,6 +13,9 @@ IMAGES=(
   "devandrejesus/palindrome-checker-go:esgz"
   "devandrejesus/word-counter-go:esgz"
   "devandrejesus/uuid-generator-go:esgz"
+  "devandrejesus/spring-boot-java:esgz"
+  "devandrejesus/file-manager-python:esgz"
+  "devandrejesus/fibonacci-node:esgz"
 )
 
 LOCAL_REGISTRY="localhost:5000"
