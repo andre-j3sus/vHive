@@ -139,6 +139,10 @@ func bootstrapVM(orch *Orchestrator, vmID, imageName string) error {
 		fmt.Printf("%s is not a valid image reference\n", imageName)
 	}
 	dockerHost := refSpec.Hostname()
+	// Adjust host key for Docker Hub
+	if dockerHost == "docker.io" {
+		dockerHost = "https://index.docker.io/v1/"
+	}
 	dockerUser, ok := os.LookupEnv("DOCKER_USERNAME")
 	if !ok {
 		fmt.Print("Docker username: ")
