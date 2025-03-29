@@ -69,6 +69,16 @@ snapshot was taken.
 
 ## Setup
 
+### Prerequisites
+
+You will need the following to run this PoC:
+
+* A computer with a recent-enough version of Linux (4.14+), and KVM enabled
+   * This was tested using CloudLab profile [ntu-cloud/vhive-ubuntu24][https://www.cloudlab.us/p/ntu-cloud/vhive-ubuntu24] on `xl170` machines.
+* A recent installation of Docker CE (for building the root filesystem)
+* git
+* Go 1.21 or later
+
 Follow these steps to set up the environment for using remote firecracker-containerd snapshots with Stargz:
 
 1. Clone the vHive repository and checkout to the `remote-snapshots-stargz` branch:
@@ -378,7 +388,7 @@ I also tried to change the disk state of the VM by creating some files, but the 
 - [ ] Investigate what is the MMIO device needed to restore the VM from a snapshot. More information in [Current Limitations](#current-limitations).
 - [ ] Investigate if there are better deduplication mechanisms for the memory file. Currently we use a simple chunk and hash approach.
 - [ ] Fix bug with demux-snapshotter: when the VM is stopped, the demux-snapshotter crashes.
-- [ ] Try to run the PoC in Ubuntu 24: I tried, but I got a network error with the vsock device. I need to investigate this further.
+- [x] Try to run the PoC in Ubuntu 24: I tried, but I got a network error with the vsock device. I need to investigate this further.
 
 ---
 
