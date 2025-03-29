@@ -52,9 +52,9 @@ func TestMain(m *testing.M) {
 
 func testSnapshotManager(t *testing.T, mgr *snapshotting.SnapshotManager, revision, imageName string) {
 	// Create snapshot
-	snap, err := mgr.InitSnapshot(revision, imageName)
+	snap, err := mgr.InitSnapshot(revision, imageName, "")
 	require.NoError(t, err, fmt.Sprintf("Failed to create snapshot for %s", revision))
-	_, err = mgr.InitSnapshot(revision, imageName)
+	_, err = mgr.InitSnapshot(revision, imageName, "")
 	require.Error(t, err, fmt.Sprintf("Init should fail when a snapshot has already been created for %s", revision))
 
 	err = mgr.CommitSnapshot(snap.GetId())

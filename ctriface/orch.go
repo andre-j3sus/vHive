@@ -76,24 +76,31 @@ func (wio WorkloadIoWriter) Write(p []byte) (n int, err error) {
 
 // Orchestrator Drives all VMs
 type Orchestrator struct {
-	vmPool       *misc.VMPool
-	cachedImages map[string]containerd.Image
-	workloadIo   sync.Map // vmID string -> WorkloadIoWriter
-	snapshotter  string
-	client       *containerd.Client
-	fcClient     *fcclient.Client
-	devMapper    *devmapper.DeviceMapper
-	imageManager *image.ImageManager
+	vmPool            *misc.VMPool
+	cachedImages      map[string]containerd.Image
+	workloadIo        sync.Map // vmID string -> WorkloadIoWriter
+	snapshotter       string
+	client            *containerd.Client
+	fcClient          *fcclient.Client
+	devMapper         *devmapper.DeviceMapper
+	imageManager      *image.ImageManager
+	dockerCredentials string
 	// store *skv.KVStore
-	snapshotsEnabled bool
-	isUPFEnabled     bool
-	isLazyMode       bool
-	snapshotsDir     string
-	isMetricsMode    bool
-	netPoolSize      int
+	snapshotMode    string
+	isUPFEnabled    bool
+	isLazyMode      bool
+	snapshotsDir    string
+	snapshotsBucket string
+	isMetricsMode   bool
+	netPoolSize     int
 
 	vethPrefix  string
 	clonePrefix string
+
+	minioAddr      string
+	minioAccessKey string
+	minioSecretKey string
+	redisAddr      string
 
 	memoryManager *manager.MemoryManager
 }
@@ -106,9 +113,14 @@ func NewOrchestrator(snapshotter, hostIface string, opts ...OrchestratorOption) 
 	o.cachedImages = make(map[string]containerd.Image)
 	o.snapshotter = snapshotter
 	o.snapshotsDir = "/fccd/snapshots"
+	o.snapshotsBucket = "snapshots"
 	o.netPoolSize = 10
 	o.vethPrefix = "172.17"
 	o.clonePrefix = "172.18"
+	o.minioAddr = "10.96.0.46:9000"
+	o.minioAccessKey = "minio"
+	o.minioSecretKey = "minio123"
+	o.redisAddr = "10.96.0.47:6379"
 
 	for _, opt := range opts {
 		opt(o)
@@ -174,9 +186,9 @@ func (o *Orchestrator) Cleanup() {
 	}
 }
 
-// GetSnapshotsEnabled Returns the snapshots mode of the orchestrator
-func (o *Orchestrator) GetSnapshotsEnabled() bool {
-	return o.snapshotsEnabled
+// GetSnapshotMode Returns the snapshots mode of the orchestrator
+func (o *Orchestrator) GetSnapshotMode() string {
+	return o.snapshotMode
 }
 
 // GetUPFEnabled Returns the UPF mode of the orchestrator
@@ -212,6 +224,31 @@ func (o *Orchestrator) GetUPFLatencyStats(vmID string) ([]*metrics.Metric, error
 // GetSnapshotsDir Returns the orchestrator's snapshot directory
 func (o *Orchestrator) GetSnapshotsDir() string {
 	return o.snapshotsDir
+}
+
+// GetSnapshotsBucket Returns the orchestrator's snapshot S3 bucket (remote snapshots)
+func (o *Orchestrator) GetSnapshotsBucket() string {
+	return o.snapshotsBucket
+}
+
+func (o *Orchestrator) GetMinioAddr() string {
+	return o.minioAddr
+}
+
+func (o *Orchestrator) GetMinioAccessKey() string {
+	return o.minioAccessKey
+}
+
+func (o *Orchestrator) GetMinioSecretKey() string {
+	return o.minioSecretKey
+}
+
+func (o *Orchestrator) GetRedisAddr() string {
+	return o.redisAddr
+}
+
+func (o *Orchestrator) GetDockerCredentials() string {
+	return o.dockerCredentials
 }
 
 func (o *Orchestrator) getSnapshotFile(vmID string) string {

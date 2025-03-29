@@ -74,23 +74,35 @@ func SetupFirecrackerContainerd() error {
 	}
 
 	// rootfs image
-	rootfsImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, "default-rootfs.img"))
-	if !utils.CheckErrorWithMsg(err, "Failed to find rootfs image!\n") {
-		return err
+	rootfsImages := []string{
+		"default-rootfs.img",
+		"rootfs-stargz.img",
 	}
-	err = utils.CopyToDir(rootfsImgPath, "/var/lib/firecracker-containerd/runtime/", true)
-	if !utils.CheckErrorWithMsg(err, "Failed to copy rootfs image!\n") {
-		return err
+	for _, img := range rootfsImages {
+		rootfsImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, img))
+		if !utils.CheckErrorWithMsg(err, "Failed to find rootfs image: <%s>!\n", img) {
+			return err
+		}
+		err = utils.CopyToDir(rootfsImgPath, "/var/lib/firecracker-containerd/runtime/", true)
+		if !utils.CheckErrorWithMsg(err, "Failed to copy rootfs image: <%s>!\n", img) {
+			return err
+		}
 	}
 
 	// kernel image; better to download it from AWS S3 but it takes too much time on NTU network
-	kernelImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, "vmlinux-5.10.186"))
-	if !utils.CheckErrorWithMsg(err, "Failed to download kernel image!\n") {
-		return err
+	kernelImages := []string{
+		"vmlinux-5.10.186",
+		"default-vmlinux.bin",
 	}
-	err = utils.CopyToDir(kernelImgPath, "/var/lib/firecracker-containerd/runtime/hello-vmlinux.bin", true)
-	if !utils.CheckErrorWithMsg(err, "Failed to copy kernel image!\n") {
-		return err
+	for _, kernel := range kernelImages {
+		kernelImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, kernel))
+		if !utils.CheckErrorWithMsg(err, "Failed to find required file: <%s>!\n", kernel) {
+			return err
+		}
+		err = utils.CopyToDir(kernelImgPath, "/var/lib/firecracker-containerd/runtime/", true)
+		if !utils.CheckErrorWithMsg(err, "Failed to copy required file: <%s>!\n", kernel) {
+			return err
+		}
 	}
 
 	// Copy config.toml

@@ -1,9 +1,9 @@
 package snapshotting
 
 import (
-	"os"
-	"github.com/pkg/errors"
 	"encoding/gob"
+	"github.com/pkg/errors"
+	"os"
 
 	s "github.com/vhive-serverless/vhive/snapshotting"
 )

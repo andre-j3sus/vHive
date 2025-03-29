@@ -46,6 +46,10 @@ import (
 	hpb "github.com/vhive-serverless/vhive/examples/protobuf/helloworld"
 	"github.com/vhive-serverless/vhive/metrics"
 	"github.com/vhive-serverless/vhive/snapshotting"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/redis/go-redis/v9"
 )
 
 var isTestMode bool // set with a call to NewFuncPool
@@ -65,14 +69,31 @@ type FuncPool struct {
 
 // NewFuncPool Initializes a pool of functions. Functions can only be added
 // but never removed from the map.
-func NewFuncPool(saveMemoryMode bool, servedTh uint64, pinnedFuncNum int, testModeOn bool) *FuncPool {
+func NewFuncPool(saveMemoryMode bool, servedTh uint64, pinnedFuncNum int, testModeOn bool, snapshotMode string) *FuncPool {
 	p := new(FuncPool)
 	p.funcMap = make(map[string]*Function)
 	p.saveMemoryMode = saveMemoryMode
 	p.servedTh = servedTh
 	p.pinnedFuncNum = pinnedFuncNum
 	p.stats = NewStats()
-	p.snapshotManager = snapshotting.NewSnapshotManager("/fccd/snapshots")
+
+	var redisClient *redis.Client
+	var minioClient *minio.Client
+
+	if snapshotMode == "remote" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     "10.96.0.47:6379",
+			Password: "", // no password set TODO: either receive connection URL or password in constructor
+			DB:       0,  // use default DB
+		})
+
+		minioClient, _ = minio.New("10.96.0.46:9000", &minio.Options{
+			Creds:  credentials.NewStaticV4("minio", "minio123", ""),
+			Secure: false,
+		})
+	}
+
+	p.snapshotManager = snapshotting.NewSnapshotManager("/fccd/snapshots", "snapshots", minioClient, redisClient)
 
 	if !testModeOn {
 		heartbeat := time.NewTicker(60 * time.Second)
@@ -302,7 +323,7 @@ func (f *Function) Serve(ctx context.Context, fID, imageName, reqPayload string)
 		}
 	}
 
-	if orch.GetSnapshotsEnabled() {
+	if orch.GetSnapshotMode() != "disabled" {
 		f.OnceCreateSnapInstance.Do(
 			func() {
 				logger.Debug("First time offloading, need to create a snapshot first")
@@ -456,7 +477,7 @@ func (f *Function) CreateInstanceSnapshot() {
 		log.Panic(err)
 	}
 
-	snap, err := f.snapshotManager.InitSnapshot(f.fID, f.imageName)
+	snap, err := f.snapshotManager.InitSnapshot(f.fID, f.imageName, f.vmID)
 	if err != nil {
 		log.Panic(err)
 	}

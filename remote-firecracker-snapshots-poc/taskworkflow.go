@@ -1,15 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
-	"sync"
-	"bufio"
 
 	"github.com/containerd/containerd/reference"
 )
@@ -42,8 +42,8 @@ func main() {
 	var keepalive = flag.Int("keepalive", 3600, "keepalive timeout")
 	var makeSnap = flag.Bool("make-snap", false, "bootstrap and make a snapshot")
 	var bootFromSnap = flag.Bool("boot-from-snap", false, "boot from snapshot")
-	
-	// MinIO-related flags for remote snapshot storage 
+
+	// MinIO-related flags for remote snapshot storage
 	var useRemoteStorage = flag.Bool("use-remote-storage", false, "store snapshots remotely")
 	var minioEndpoint = flag.String("minio-endpoint", "localhost:9000", "MinIO server endpoint")
 	var accessKey = flag.String("minio-access-key", "ROOTUSER", "MinIO access key")

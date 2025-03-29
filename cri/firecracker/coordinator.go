@@ -35,6 +35,10 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/vhive-serverless/vhive/ctriface"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/redis/go-redis/v9"
 )
 
 type coordinator struct {
@@ -67,10 +71,38 @@ func newFirecrackerCoordinator(orch *ctriface.Orchestrator, opts ...coordinatorO
 	}
 
 	snapshotsDir := "/fccd/test/snapshots"
+	snapshotsBucket := "snapshots"
+	minioAddr := "localhost:50052"
+	minioAccessKey := "minio"
+	minioSecretKey := "minio123"
+	redisAddr := "localhost:50053"
+
 	if !c.withoutOrchestrator {
 		snapshotsDir = orch.GetSnapshotsDir()
+		snapshotsBucket = orch.GetSnapshotsBucket()
+		minioAddr = orch.GetMinioAddr()
+		minioAccessKey = orch.GetMinioAccessKey()
+		minioSecretKey = orch.GetMinioSecretKey()
+		redisAddr = orch.GetRedisAddr()
 	}
-	c.snapshotManager = snapshotting.NewSnapshotManager(snapshotsDir)
+
+	var redisClient *redis.Client
+	var minioClient *minio.Client
+
+	if c.orch.GetSnapshotMode() == "remote" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     redisAddr,
+			Password: "", // TODO: receive connection URL or password in constructor
+			DB:       0,
+		})
+
+		minioClient, _ = minio.New(minioAddr, &minio.Options{
+			Creds:  credentials.NewStaticV4(minioAccessKey, minioSecretKey, ""),
+			Secure: false,
+		})
+	}
+
+	c.snapshotManager = snapshotting.NewSnapshotManager(snapshotsDir, snapshotsBucket, minioClient, redisClient)
 
 	return c
 }
@@ -80,13 +112,27 @@ func (c *coordinator) startVM(ctx context.Context, image, revision string) (*fun
 }
 
 func (c *coordinator) startVMWithEnvironment(ctx context.Context, image, revision string, environment []string) (*funcInstance, error) {
-	if c.orch != nil && c.orch.GetSnapshotsEnabled() {
-		// Check if snapshot is available
-		if snap, err := c.snapshotManager.AcquireSnapshot(revision); err == nil {
+	if c.orch != nil && c.orch.GetSnapshotMode() != "disabled" {
+		if snap, err := c.snapshotManager.AcquireSnapshot(revision); snap == nil {
+			log.Printf("failed to acquire snapshot: %w", err)
+			if c.orch.GetSnapshotMode() == "remote" {
+				log.Printf("downloading snapshot from remote storage")
+				if _, err := c.snapshotManager.DownloadSnapshot(revision); err != nil {
+					log.Printf("failed to download snapshot from remote storage: %w", err)
+					c.snapshotManager.DeleteSnapshot(revision)
+				} else {
+					log.Printf("downloaded snapshot from remote storage")
+				}
+			}
+		}
+
+		if snap, _ := c.snapshotManager.AcquireSnapshot(revision); snap != nil {
+			log.Printf("loading snapshot %s", snap.GetId())
 			return c.orchLoadInstance(ctx, snap)
 		}
 	}
 
+	log.Printf("creating fresh instance")
 	return c.orchStartVM(ctx, image, revision, environment)
 }
 
@@ -102,7 +148,7 @@ func (c *coordinator) stopVM(ctx context.Context, containerID string) error {
 		return nil
 	}
 
-	if c.orch != nil && c.orch.GetSnapshotsEnabled() && !fi.SnapBooted {
+	if c.orch != nil && c.orch.GetSnapshotMode() != "disabled" && !fi.SnapBooted {
 		err := c.orchCreateSnapshot(ctx, fi)
 		if err != nil {
 			log.Printf("Err creating snapshot %s\n", err)
@@ -199,8 +245,9 @@ func (c *coordinator) orchLoadInstance(ctx context.Context, snap *snapshotting.S
 
 func (c *coordinator) orchCreateSnapshot(ctx context.Context, fi *funcInstance) error {
 	var err error
+	log.Printf("creating snapshot for %s\n", fi.Revision)
 
-	snap, err := c.snapshotManager.InitSnapshot(fi.Revision, fi.Image)
+	snap, err := c.snapshotManager.InitSnapshot(fi.Revision, fi.Image, fi.VmID)
 	if err != nil {
 		fi.Logger.WithError(err).Error("failed to initialize snapshot")
 		return nil
@@ -230,9 +277,21 @@ func (c *coordinator) orchCreateSnapshot(ctx context.Context, fi *funcInstance) 
 		}
 	}
 
+	if err := snap.SerializeSnapInfo(); err != nil {
+		fi.Logger.WithError(err).Error("failed to serialize snapshot info")
+		return err
+	}
+
 	if err := c.snapshotManager.CommitSnapshot(fi.Revision); err != nil {
 		fi.Logger.WithError(err).Error("failed to commit snapshot")
 		return err
+	}
+
+	if c.orch.GetSnapshotMode() == "remote" {
+		fi.Logger.Debug("uploading snapshot to remote storage")
+		if err := c.snapshotManager.UploadSnapshot(fi.Revision); err != nil {
+			fi.Logger.WithError(err).Error("failed to upload snapshot")
+		}
 	}
 
 	return nil

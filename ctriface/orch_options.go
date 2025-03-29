@@ -35,10 +35,10 @@ func WithTestModeOn(testModeOn bool) OrchestratorOption {
 	}
 }
 
-// WithSnapshots Sets the snapshot mode on or off
-func WithSnapshots(snapshotsEnabled bool) OrchestratorOption {
+// WithSnapshotMode Sets the snapshot mode
+func WithSnapshotMode(snapshotMode string) OrchestratorOption {
 	return func(o *Orchestrator) {
-		o.snapshotsEnabled = snapshotsEnabled
+		o.snapshotMode = snapshotMode
 	}
 }
 
@@ -88,5 +88,35 @@ func WithVethPrefix(vethPrefix string) OrchestratorOption {
 func WithClonePrefix(clonePrefix string) OrchestratorOption {
 	return func(o *Orchestrator) {
 		o.clonePrefix = clonePrefix
+	}
+}
+
+func WithMinioAddr(minioAddr string) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.minioAddr = minioAddr
+	}
+}
+
+func WithMinioAccessKey(minioAccessKey string) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.minioAccessKey = minioAccessKey
+	}
+}
+
+func WithMinioSecretKey(minioSecretKey string) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.minioSecretKey = minioSecretKey
+	}
+}
+
+func WithRedisAddr(redisAddr string) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.redisAddr = redisAddr
+	}
+}
+
+func WithDockerCredentials(dockerCredentials string) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.dockerCredentials = dockerCredentials
 	}
 }

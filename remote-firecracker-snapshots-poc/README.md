@@ -383,12 +383,43 @@ I also tried to change the disk state of the VM by creating some files, but the 
 
 ## To Do
 
+### PoC
+
 - [x] Test PoC with [other images](https://github.com/andre-j3sus/faas-examples/).
-- [ ] Test compression mechanisms for the memory file.
+- [x] Test compression mechanisms for the memory file.
 - [ ] Investigate what is the MMIO device needed to restore the VM from a snapshot. More information in [Current Limitations](#current-limitations).
 - [ ] Investigate if there are better deduplication mechanisms for the memory file. Currently we use a simple chunk and hash approach.
-- [ ] Fix bug with demux-snapshotter: when the VM is stopped, the demux-snapshotter crashes.
 - [x] Try to run the PoC in Ubuntu 24: I tried, but I got a network error with the vsock device. I need to investigate this further.
+
+### vHive Integration
+
+I'm currently working on integrating remote snapshots on vHive, and the list of steps to do is as follows:
+
+- [x] Review vHive base code, quickstart and documentation.
+- [x] Follow quickstart guide to set up the environment with local snapshots (to review and get used to the env).
+- [x] Change the code and configs to integrate remote snapshots.
+- [ ] Test the integration in small steps:
+  - [x] Deploy a stargz function
+  - [x] Invoke a stargz function
+  - [x] Take a snapshot of a stargz function and store it locally
+  - [x] Boot a stargz function from a local snapshot
+  - [ ] Take a snapshot of a stargz function and store it remotely
+  - [ ] Boot a stargz function from a remote snapshot
+- [ ] Review and improve code quality and documentation.
+
+The differences between the PoC and vHive are:
+
+- **Snapshotters**: The PoC uses a `stargz` snapshotter that resides inside each microVM. To expose these snapshotters as a single one to `firecracker-containerd`, we need to use the [`demux-snapshotter`](https://github.com/firecracker-microvm/firecracker-containerd/blob/main/snapshotter/README.md#demultiplexing-snapshotter) component, which serves as a proxy to the snapshotters inside the microVMs. We also need the `http-address-resolver` component to resolve the addresses of the snapshotters inside the microVMs.  
+   - These two components must run on each worker node in a vHive cluster.
+
+- **Starting the VM and pulling the image**: In vHive, we first pull the image and then start the VM. In the PoC, we must first start the VM and then pull the image. This is because the image is pulled from inside the VM (since the snapshotter resides within it).  
+   - This means we likely need to change the order of operations based on a flag or snapshotter type.
+   - Additionally, to pull images using remote snapshotters, we need to [set the registry credentials using the credential helper MMDS](https://github.com/andre-j3sus/firecracker-containerd/blob/main/docs/remote-snapshotter.md#credentials).
+
+- **Enabling snapshots**: In vHive, snapshots are enabled via a boolean flag. However, we now need to specify whether to use remote or local snapshots. This can be done either by adding a new flag to the `vHive` configuration file (e.g., `remote-snapshots: true`) or by converting the existing flag into an enum (e.g., `snapshots: local | remote | none`).
+
+- **Container disk state**: In vHive, the container disk state is saved by capturing the container snapshot disk changes, then mounting them using devmapper before launching the VM, and finally specifying the `ContainerSnapshotPath` parameter in the `CreateVMRequest` to `firecracker-containerd`. In the PoC, the container disk state is stored on a FUSE filesystem backed by a memory file, so it doesn't need to be mounted before launching the VM.  
+   - We will need to make this parameter optional and use it only when the user wants to enable local snapshots with devmapper. (Remote snapshots with devmapper are currently not supported.)
 
 ---
 

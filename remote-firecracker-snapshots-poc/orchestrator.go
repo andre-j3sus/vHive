@@ -284,7 +284,7 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 
 	if orch.useRemoteStorage {
 		log.Println("Uploading snapshot to remote storage")
-		
+
 		err := orch.snapshotManager.UploadSnapshot(revision)
 		if err != nil {
 			return fmt.Errorf("uploading snapshot to remote storage: %w", err)
@@ -294,7 +294,7 @@ func (orch *Orchestrator) createSnapshot(vmID, revision string) error {
 	return nil
 }
 
-func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {	
+func (orch *Orchestrator) bootVMFromSnapshot(vmID, revision string) error {
 	if _, err := orch.snapshotManager.AcquireSnapshot(revision); err != nil {
 		if orch.useRemoteStorage {
 			log.Println("Downloading snapshot from remote storage")

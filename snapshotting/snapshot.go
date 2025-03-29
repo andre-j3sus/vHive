@@ -40,15 +40,18 @@ type Snapshot struct {
 	ContainerSnapName string
 	snapDir           string
 	Image             string
+	VmID              string   // ID of the VM that created the snapshot
+	MemFileChunks     []string // Memory file chunk hashes (for deduplication)
 }
 
-func NewSnapshot(id, baseFolder, image string) *Snapshot {
+func NewSnapshot(id, baseFolder, image, vmID string) *Snapshot {
 	s := &Snapshot{
 		id:                id,
 		ready:             false,
 		snapDir:           filepath.Join(baseFolder, id),
 		ContainerSnapName: fmt.Sprintf("%s%s", id, time.Now().Format("20060102150405")),
 		Image:             image,
+		VmID:              vmID,
 	}
 
 	return s

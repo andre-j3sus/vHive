@@ -1,24 +1,23 @@
 package snapshotting
 
 import (
+	"bytes"
 	"context"
-	"encoding/hex"
 	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"github.com/pkg/errors"
 	"io"
 	"os"
-	"fmt"
-	"bytes"
-	"time"
 	"path/filepath"
+	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/redis/go-redis/v9"
 
 	s "github.com/vhive-serverless/vhive/snapshotting"
 )
-
 
 const ChunkSize = 1024 * 1024 // 1MB chunks
 
@@ -34,16 +33,16 @@ type RemoteSnapshotManager struct {
 
 // Create a new RemoteSnapshotManager with the specified configuration
 func NewRemoteSnapshotManager(baseFolder, minioEndpoint, accessKey, secretKey, bucketName, redisAddr string, useRemoteStorage bool) (*RemoteSnapshotManager, error) {
-	originalManager := s.NewSnapshotManager(baseFolder)	
+	originalManager := s.NewSnapshotManager(baseFolder)
 	manager := &RemoteSnapshotManager{
 		SnapshotManager: originalManager, // Assign the original manager
 	}
 
 	if useRemoteStorage {
 		manager.redisClient = redis.NewClient(&redis.Options{
-			Addr: redisAddr,
+			Addr:     redisAddr,
 			Password: "", // no password set TODO: either receive connection URL or password in constructor
-			DB:		  0,  // use default DB
+			DB:       0,  // use default DB
 		})
 
 		minioClient, err := minio.New(minioEndpoint, &minio.Options{
@@ -68,7 +67,7 @@ func NewRemoteSnapshotManager(baseFolder, minioEndpoint, accessKey, secretKey, b
 			}
 		}
 	}
-	
+
 	return manager, nil
 }
 
@@ -168,7 +167,7 @@ func (mgr *RemoteSnapshotManager) chunkAndUploadFile(filePath string) ([]string,
 		// Check if chunk exists in Redis
 		exists, err := mgr.redisClient.Exists(context.Background(), chunkHash).Result()
 		if err != nil {
-			return nil, 0, errors.Wrap(err, "checking Redis for chunk" + chunkHash)
+			return nil, 0, errors.Wrap(err, "checking Redis for chunk"+chunkHash)
 		}
 
 		if exists == 0 {
@@ -184,7 +183,7 @@ func (mgr *RemoteSnapshotManager) chunkAndUploadFile(filePath string) ([]string,
 			if err != nil {
 				return nil, 0, errors.Wrap(err, "uploading chunk to MinIO")
 			}
-			
+
 			// Mark chunk as stored in Redis with TTL
 			err = mgr.redisClient.Set(context.Background(), chunkHash, "stored", 24*time.Hour).Err()
 			if err != nil {
@@ -207,7 +206,7 @@ func (mgr *RemoteSnapshotManager) DownloadSnapshot(revision string) (*RemoteSnap
 	snap := &RemoteSnapshot{
 		Snapshot: baseSnap,
 	}
-	
+
 	// Download and parse info file
 	info_file, err := mgr.minioClient.GetObject(
 		context.Background(),
@@ -226,7 +225,7 @@ func (mgr *RemoteSnapshotManager) DownloadSnapshot(revision string) (*RemoteSnap
 	}
 	defer outFile.Close()
 	if _, err := io.Copy(outFile, info_file); err != nil {
-		return nil,  errors.Wrap(err, "writing file")
+		return nil, errors.Wrap(err, "writing file")
 	}
 
 	err = snap.LoadSnapInfo(snap.GetInfoFilePath())
@@ -283,7 +282,7 @@ func (mgr *RemoteSnapshotManager) downloadChunkedFile(filePath string, chunkHash
 		if err != nil {
 			return errors.Wrapf(err, "downloading chunk %s", chunkHash)
 		}
-		
+
 		if _, err := io.Copy(outFile, chunk); err != nil {
 			chunk.Close()
 			return errors.Wrapf(err, "writing chunk %s", chunkHash)
