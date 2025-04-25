@@ -224,7 +224,7 @@ func main() {
 		err = setup.SetupGvisorContainerd()
 	case "setup_firecracker_containerd":
 		utils.InfoPrintf("Set up firecracker_containerd\n")
-		err = setup.SetupFirecrackerContainerd()
+		err = setup.SetupFirecrackerContainerd(false)
 	case "install_stock":
 		utils.InfoPrintf("Install stock\n")
 		err = setup.InstallStock()

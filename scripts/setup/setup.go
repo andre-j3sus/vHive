@@ -31,7 +31,7 @@ import (
 )
 
 // Set up firecracker containerd
-func SetupFirecrackerContainerd() error {
+func SetupFirecrackerContainerd(useStargz bool) error {
 	_, err := utils.ExecShellCmd(
 		"sudo mkdir -p /etc/firecracker-containerd" +
 			" && sudo mkdir -p /var/lib/firecracker-containerd/runtime" +
@@ -74,17 +74,30 @@ func SetupFirecrackerContainerd() error {
 	}
 
 	// rootfs image
-	rootfsImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, "default-rootfs.img"))
+	var rootfsFileName string
+	if useStargz {
+		// https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/remote-snapshotter-getting-started.md#build-a-firecracker-rootfs-with-a-remote-snapshotter
+		rootfsFileName = "rootfs-stargz.img"
+	} else {
+		rootfsFileName = "default-rootfs.img"
+	}
+	rootfsImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, rootfsFileName))
 	if !utils.CheckErrorWithMsg(err, "Failed to find rootfs image!\n") {
 		return err
 	}
-	err = utils.CopyToDir(rootfsImgPath, "/var/lib/firecracker-containerd/runtime/", true)
+	err = utils.CopyToDir(rootfsImgPath, "/var/lib/firecracker-containerd/runtime/default-rootfs.img", true)
 	if !utils.CheckErrorWithMsg(err, "Failed to copy rootfs image!\n") {
 		return err
 	}
 
 	// kernel image; better to download it from AWS S3 but it takes too much time on NTU network
-	kernelImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, "vmlinux-5.10.186"))
+	var kernelFileName string
+	if useStargz {
+		kernelFileName = "default-vmlinux.bin" // supports FUSE
+	} else {
+		kernelFileName = "vmlinux-5.10.186"
+	}
+	kernelImgPath, err := utils.GetVHiveFilePath(path.Join(binsDir, kernelFileName))
 	if !utils.CheckErrorWithMsg(err, "Failed to download kernel image!\n") {
 		return err
 	}
