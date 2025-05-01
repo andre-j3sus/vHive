@@ -72,7 +72,8 @@ func NewFuncPool(saveMemoryMode bool, servedTh uint64, pinnedFuncNum int, testMo
 	p.servedTh = servedTh
 	p.pinnedFuncNum = pinnedFuncNum
 	p.stats = NewStats()
-	p.snapshotManager = snapshotting.NewSnapshotManager("/fccd/snapshots")
+
+	p.snapshotManager = snapshotting.NewSnapshotManager("/fccd/snapshots", "", nil)
 
 	if !testModeOn {
 		heartbeat := time.NewTicker(60 * time.Second)
@@ -302,7 +303,7 @@ func (f *Function) Serve(ctx context.Context, fID, imageName, reqPayload string)
 		}
 	}
 
-	if orch.GetSnapshotsEnabled() {
+	if orch.GetSnapshotMode() != "disabled" {
 		f.OnceCreateSnapInstance.Do(
 			func() {
 				logger.Debug("First time offloading, need to create a snapshot first")

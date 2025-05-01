@@ -54,16 +54,16 @@ var (
 	orch     *ctriface.Orchestrator
 	funcPool *FuncPool
 
-	isSaveMemory       *bool
-	isSnapshotsEnabled *bool
-	isUPFEnabled       *bool
-	isLazyMode         *bool
-	isMetricsMode      *bool
-	servedThreshold    *uint64
-	pinnedFuncNum      *int
-	criSock            *string
-	hostIface          *string
-	netPoolSize        *int
+	isSaveMemory    *bool
+	snapshotMode    *string
+	isUPFEnabled    *bool
+	isLazyMode      *bool
+	isMetricsMode   *bool
+	servedThreshold *uint64
+	pinnedFuncNum   *int
+	criSock         *string
+	hostIface       *string
+	netPoolSize     *int
 )
 
 func main() {
@@ -74,7 +74,7 @@ func main() {
 	debug := flag.Bool("dbg", false, "Enable debug logging")
 
 	isSaveMemory = flag.Bool("ms", false, "Enable memory saving")
-	isSnapshotsEnabled = flag.Bool("snapshots", false, "Use VM snapshots when adding function instances")
+	snapshotMode = flag.String("snapshots", "disabled", "Use VM snapshots when adding function instances, valid options: disabled, local, remote")
 	isUPFEnabled = flag.Bool("upf", false, "Enable user-level page faults guest memory management")
 	isMetricsMode = flag.Bool("metrics", false, "Calculate UPF metrics")
 	servedThreshold = flag.Uint64("st", 1000*1000, "Functions serves X RPCs before it shuts down (if saveMemory=true)")
@@ -94,12 +94,17 @@ func main() {
 		return
 	}
 
+	if *snapshotMode != "disabled" && *snapshotMode != "local" && *snapshotMode != "remote" {
+		log.Fatalln("Only \"disabled\", \"local\" or \"remote\" are supported as snapshotting-techniques")
+		return
+	}
+
 	if *isUPFEnabled {
 		log.Error("User-level page faults are temporarily disabled (gh-807)")
 		return
 	}
 
-	if *isUPFEnabled && !*isSnapshotsEnabled {
+	if *isUPFEnabled && *snapshotMode == "disabled" {
 		log.Error("User-level page faults are not supported without snapshots")
 		return
 	}
@@ -140,7 +145,7 @@ func main() {
 			*snapshotter,
 			*hostIface,
 			ctriface.WithTestModeOn(testModeOn),
-			ctriface.WithSnapshots(*isSnapshotsEnabled),
+			ctriface.WithSnapshotMode(*snapshotMode),
 			ctriface.WithUPF(*isUPFEnabled),
 			ctriface.WithMetricsMode(*isMetricsMode),
 			ctriface.WithLazyMode(*isLazyMode),

@@ -77,11 +77,16 @@ func TestMain(m *testing.M) {
 	log.Infof("Drop cache: %t", !*isWithCache)
 	log.Infof("Bench dir: %s", *benchDir)
 
+	var snapshotMode string = "disabled"
+	if *isSnapshotsEnabledTest {
+		snapshotMode = "local"
+	}
+
 	orch = ctriface.NewOrchestrator(
 		"devmapper",
 		"",
 		ctriface.WithTestModeOn(true),
-		ctriface.WithSnapshots(*isSnapshotsEnabledTest),
+		ctriface.WithSnapshotMode(snapshotMode),
 		ctriface.WithUPF(*isUPFEnabledTest),
 		ctriface.WithMetricsMode(*isMetricsModeTest),
 		ctriface.WithLazyMode(*isLazyModeTest),
